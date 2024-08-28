@@ -27,7 +27,7 @@
 //	    select {
 //	    case msg <- subscription.Out():
 //	        // handle msg.Data() and msg.Events()
-//	    case <-subscription.Cancelled():
+//	    case <-subscription.Canceled():
 //	        return subscription.Err()
 //	    }
 //	}
@@ -38,8 +38,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/tendermint/tendermint/libs/service"
-	cmtsync "github.com/tendermint/tendermint/libs/sync"
+	"github.com/cometbft/cometbft/libs/service"
+	cmtsync "github.com/cometbft/cometbft/libs/sync"
 )
 
 type operation int

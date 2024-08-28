@@ -4,105 +4,100 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/gogo/protobuf/proto"
-	cstypes "github.com/tendermint/tendermint/consensus/types"
-	"github.com/tendermint/tendermint/libs/bits"
-	cmtmath "github.com/tendermint/tendermint/libs/math"
-	"github.com/tendermint/tendermint/p2p"
-	cmtcons "github.com/tendermint/tendermint/proto/tendermint/consensus"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
-	"github.com/tendermint/tendermint/types"
+	"github.com/cosmos/gogoproto/proto"
+
+	cstypes "github.com/cometbft/cometbft/consensus/types"
+	"github.com/cometbft/cometbft/libs/bits"
+	cmtmath "github.com/cometbft/cometbft/libs/math"
+	"github.com/cometbft/cometbft/p2p"
+	cmtcons "github.com/cometbft/cometbft/proto/tendermint/consensus"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	"github.com/cometbft/cometbft/types"
 )
 
 // MsgToProto takes a consensus message type and returns the proto defined consensus message.
 //
 // TODO: This needs to be removed, but WALToProto depends on this.
-func MsgToProto(msg Message) (*cmtcons.Message, error) {
+func MsgToProto(msg Message) (proto.Message, error) {
 	if msg == nil {
 		return nil, errors.New("consensus: message is nil")
 	}
+	var pb proto.Message
+
 	switch msg := msg.(type) {
 	case *NewRoundStepMessage:
-		m := &cmtcons.NewRoundStep{
+		pb = &cmtcons.NewRoundStep{
 			Height:                msg.Height,
 			Round:                 msg.Round,
 			Step:                  uint32(msg.Step),
 			SecondsSinceStartTime: msg.SecondsSinceStartTime,
 			LastCommitRound:       msg.LastCommitRound,
 		}
-		return m.Wrap().(*cmtcons.Message), nil
 
 	case *NewValidBlockMessage:
 		pbPartSetHeader := msg.BlockPartSetHeader.ToProto()
 		pbBits := msg.BlockParts.ToProto()
-		m := &cmtcons.NewValidBlock{
+		pb = &cmtcons.NewValidBlock{
 			Height:             msg.Height,
 			Round:              msg.Round,
 			BlockPartSetHeader: pbPartSetHeader,
 			BlockParts:         pbBits,
 			IsCommit:           msg.IsCommit,
 		}
-		return m.Wrap().(*cmtcons.Message), nil
 
 	case *ProposalMessage:
 		pbP := msg.Proposal.ToProto()
-		m := &cmtcons.Proposal{
+		pb = &cmtcons.Proposal{
 			Proposal: *pbP,
 		}
-		return m.Wrap().(*cmtcons.Message), nil
 
 	case *ProposalPOLMessage:
 		pbBits := msg.ProposalPOL.ToProto()
-		m := &cmtcons.ProposalPOL{
+		pb = &cmtcons.ProposalPOL{
 			Height:           msg.Height,
 			ProposalPolRound: msg.ProposalPOLRound,
 			ProposalPol:      *pbBits,
 		}
-		return m.Wrap().(*cmtcons.Message), nil
 
 	case *BlockPartMessage:
 		parts, err := msg.Part.ToProto()
 		if err != nil {
 			return nil, fmt.Errorf("msg to proto error: %w", err)
 		}
-		m := &cmtcons.BlockPart{
+		pb = &cmtcons.BlockPart{
 			Height: msg.Height,
 			Round:  msg.Round,
 			Part:   *parts,
 		}
-		return m.Wrap().(*cmtcons.Message), nil
 
 	case *VoteMessage:
 		vote := msg.Vote.ToProto()
-		m := &cmtcons.Vote{
+		pb = &cmtcons.Vote{
 			Vote: vote,
 		}
-		return m.Wrap().(*cmtcons.Message), nil
 
 	case *HasVoteMessage:
-		m := &cmtcons.HasVote{
+		pb = &cmtcons.HasVote{
 			Height: msg.Height,
 			Round:  msg.Round,
 			Type:   msg.Type,
 			Index:  msg.Index,
 		}
-		return m.Wrap().(*cmtcons.Message), nil
 
 	case *VoteSetMaj23Message:
 		bi := msg.BlockID.ToProto()
-		m := &cmtcons.VoteSetMaj23{
+		pb = &cmtcons.VoteSetMaj23{
 			Height:  msg.Height,
 			Round:   msg.Round,
 			Type:    msg.Type,
 			BlockID: bi,
 		}
-		return m.Wrap().(*cmtcons.Message), nil
 
 	case *VoteSetBitsMessage:
 		bi := msg.BlockID.ToProto()
 		bits := msg.Votes.ToProto()
 
-		m := &cmtcons.VoteSetBits{
+		vsb := &cmtcons.VoteSetBits{
 			Height:  msg.Height,
 			Round:   msg.Round,
 			Type:    msg.Type,
@@ -110,28 +105,26 @@ func MsgToProto(msg Message) (*cmtcons.Message, error) {
 		}
 
 		if bits != nil {
-			m.Votes = *bits
+			vsb.Votes = *bits
 		}
 
-		return m.Wrap().(*cmtcons.Message), nil
+		pb = vsb
 
 	default:
 		return nil, fmt.Errorf("consensus: message not recognized: %T", msg)
 	}
+
+	return pb, nil
 }
 
 // MsgFromProto takes a consensus proto message and returns the native go type
-func MsgFromProto(p *cmtcons.Message) (Message, error) {
+func MsgFromProto(p proto.Message) (Message, error) {
 	if p == nil {
 		return nil, errors.New("consensus: nil message")
 	}
 	var pb Message
-	um, err := p.Unwrap()
-	if err != nil {
-		return nil, err
-	}
 
-	switch msg := um.(type) {
+	switch msg := p.(type) {
 	case *cmtcons.NewRoundStep:
 		rs, err := cmtmath.SafeConvertUint8(int64(msg.Step))
 		// deny message based on possible overflow
@@ -189,6 +182,8 @@ func MsgFromProto(p *cmtcons.Message) (Message, error) {
 			Part:   parts,
 		}
 	case *cmtcons.Vote:
+		// Vote validation will be handled in the vote message ValidateBasic
+		// call below.
 		vote, err := types.VoteFromProto(msg.Vote)
 		if err != nil {
 			return nil, fmt.Errorf("vote msg to proto error: %w", err)
@@ -241,22 +236,6 @@ func MsgFromProto(p *cmtcons.Message) (Message, error) {
 	return pb, nil
 }
 
-// MustEncode takes the reactors msg, makes it proto and marshals it
-// this mimics `MustMarshalBinaryBare` in that is panics on error
-//
-// Deprecated: Will be removed in v0.37.
-func MustEncode(msg Message) []byte {
-	pb, err := MsgToProto(msg)
-	if err != nil {
-		panic(err)
-	}
-	enc, err := proto.Marshal(pb)
-	if err != nil {
-		panic(err)
-	}
-	return enc
-}
-
 // WALToProto takes a WAL message and return a proto walMessage and error
 func WALToProto(msg WALMessage) (*cmtcons.WALMessage, error) {
 	var pb cmtcons.WALMessage
@@ -277,10 +256,14 @@ func WALToProto(msg WALMessage) (*cmtcons.WALMessage, error) {
 		if err != nil {
 			return nil, err
 		}
+		if w, ok := consMsg.(p2p.Wrapper); ok {
+			consMsg = w.Wrap()
+		}
+		cm := consMsg.(*cmtcons.Message)
 		pb = cmtcons.WALMessage{
 			Sum: &cmtcons.WALMessage_MsgInfo{
 				MsgInfo: &cmtcons.MsgInfo{
-					Msg:    *consMsg,
+					Msg:    *cm,
 					PeerID: string(msg.PeerID),
 				},
 			},
@@ -326,7 +309,11 @@ func WALFromProto(msg *cmtcons.WALMessage) (WALMessage, error) {
 			Step:   msg.EventDataRoundState.Step,
 		}
 	case *cmtcons.WALMessage_MsgInfo:
-		walMsg, err := MsgFromProto(&msg.MsgInfo.Msg)
+		um, err := msg.MsgInfo.Msg.Unwrap()
+		if err != nil {
+			return nil, fmt.Errorf("unwrap message: %w", err)
+		}
+		walMsg, err := MsgFromProto(um)
 		if err != nil {
 			return nil, fmt.Errorf("msgInfo from proto error: %w", err)
 		}

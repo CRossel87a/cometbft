@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	e2e "github.com/tendermint/tendermint/test/e2e/pkg"
+	e2e "github.com/cometbft/cometbft/test/e2e/pkg"
 )
 
 // Tests that all nodes have peered with each other, regardless of discovery method.
@@ -34,7 +34,7 @@ func TestNet_Peers(t *testing.T) {
 		for _, peerInfo := range netInfo.Peers {
 			peer := node.Testnet.LookupNode(peerInfo.NodeInfo.Moniker)
 			require.NotNil(t, peer, "unknown node %v", peerInfo.NodeInfo.Moniker)
-			require.Equal(t, peer.IP.String(), peerInfo.RemoteIP,
+			require.Equal(t, peer.InternalIP.String(), peerInfo.RemoteIP,
 				"unexpected IP address for peer %v", peer.Name)
 			seen[peerInfo.NodeInfo.Moniker] = true
 		}

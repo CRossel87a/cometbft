@@ -5,10 +5,10 @@ import (
 	"net"
 	"time"
 
-	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/libs/service"
-	cmtsync "github.com/tendermint/tendermint/libs/sync"
-	privvalproto "github.com/tendermint/tendermint/proto/tendermint/privval"
+	"github.com/cometbft/cometbft/libs/log"
+	"github.com/cometbft/cometbft/libs/service"
+	cmtsync "github.com/cometbft/cometbft/libs/sync"
+	privvalproto "github.com/cometbft/cometbft/proto/tendermint/privval"
 )
 
 // SignerListenerEndpointOption sets an optional parameter on the SignerListenerEndpoint.
@@ -64,10 +64,10 @@ func NewSignerListenerEndpoint(
 
 // OnStart implements service.Service.
 func (sl *SignerListenerEndpoint) OnStart() error {
-	sl.connectRequestCh = make(chan struct{})
+	sl.connectRequestCh = make(chan struct{}, 1) // Buffer of 1 to allow `serviceLoop` to re-trigger itself.
 	sl.connectionAvailableCh = make(chan net.Conn)
 
-	// NOTE: ping timeout must be less than read/write timeout
+	// NOTE: ping timeout must be less than read/write timeout.
 	sl.pingInterval = time.Duration(sl.signerEndpoint.timeoutReadWrite.Milliseconds()*2/3) * time.Millisecond
 	sl.pingTimer = time.NewTicker(sl.pingInterval)
 
@@ -181,23 +181,19 @@ func (sl *SignerListenerEndpoint) serviceLoop() {
 	for {
 		select {
 		case <-sl.connectRequestCh:
-			{
-				conn, err := sl.acceptNewConnection()
-				if err == nil {
-					sl.Logger.Info("SignerListener: Connected")
+			conn, err := sl.acceptNewConnection()
+			if err != nil {
+				sl.Logger.Error("SignerListener: Error accepting connection", "err", err)
+				sl.triggerConnect()
+				continue
+			}
 
-					// We have a good connection, wait for someone that needs one otherwise cancellation
-					select {
-					case sl.connectionAvailableCh <- conn:
-					case <-sl.Quit():
-						return
-					}
-				}
-
-				select {
-				case sl.connectRequestCh <- struct{}{}:
-				default:
-				}
+			// We have a good connection, wait for someone that needs one otherwise cancellation
+			sl.Logger.Info("SignerListener: Connected")
+			select {
+			case sl.connectionAvailableCh <- conn:
+			case <-sl.Quit():
+				return
 			}
 		case <-sl.Quit():
 			return

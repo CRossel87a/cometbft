@@ -51,6 +51,15 @@ type (
 	ErrNoABCIResponsesForHeight struct {
 		Height int64
 	}
+
+	ErrABCIResponseResponseUnmarshalForHeight struct {
+		Height int64
+	}
+
+	ErrABCIResponseCorruptedOrSpecChangeForHeight struct {
+		Err    error
+		Height int64
+	}
 )
 
 func (e ErrUnknownBlock) Error() string {
@@ -103,4 +112,16 @@ func (e ErrNoABCIResponsesForHeight) Error() string {
 	return fmt.Sprintf("could not find results for height #%d", e.Height)
 }
 
-var ErrABCIResponsesNotPersisted = errors.New("node is not persisting abci responses")
+func (e ErrABCIResponseResponseUnmarshalForHeight) Error() string {
+	return fmt.Sprintf("could not decode results for height %d", e.Height)
+}
+
+func (e ErrABCIResponseCorruptedOrSpecChangeForHeight) Error() string {
+	return fmt.Sprintf("failed to unmarshall FinalizeBlockResponse (also tried as legacy ABCI response) for height %d", e.Height)
+}
+
+func (e ErrABCIResponseCorruptedOrSpecChangeForHeight) Unwrap() error {
+	return e.Err
+}
+
+var ErrFinalizeBlockResponsesNotPersisted = errors.New("node is not persisting finalize block responses")

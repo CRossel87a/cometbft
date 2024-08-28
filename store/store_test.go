@@ -1,7 +1,7 @@
 package store
 
 import (
-	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -9,53 +9,58 @@ import (
 	"testing"
 	"time"
 
-	dbm "github.com/cometbft/cometbft-db"
-	"github.com/gogo/protobuf/proto"
+	"github.com/cosmos/gogoproto/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	cfg "github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/crypto"
-	"github.com/tendermint/tendermint/libs/log"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	cmtstore "github.com/tendermint/tendermint/proto/tendermint/store"
-	cmtversion "github.com/tendermint/tendermint/proto/tendermint/version"
-	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
-	cmttime "github.com/tendermint/tendermint/types/time"
-	"github.com/tendermint/tendermint/version"
+	dbm "github.com/cometbft/cometbft-db"
+
+	"github.com/cometbft/cometbft/crypto"
+	"github.com/cometbft/cometbft/internal/test"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
+	cmtstore "github.com/cometbft/cometbft/proto/tendermint/store"
+	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
+	sm "github.com/cometbft/cometbft/state"
+	"github.com/cometbft/cometbft/types"
+	cmttime "github.com/cometbft/cometbft/types/time"
+	"github.com/cometbft/cometbft/version"
 )
 
 // A cleanupFunc cleans up any config / test files created for a particular
 // test.
 type cleanupFunc func()
 
-// make a Commit with a single vote containing just the height and a timestamp
-func makeTestCommit(height int64, timestamp time.Time) *types.Commit {
-	commitSigs := []types.CommitSig{{
-		BlockIDFlag:      types.BlockIDFlagCommit,
-		ValidatorAddress: cmtrand.Bytes(crypto.AddressSize),
-		Timestamp:        timestamp,
-		Signature:        []byte("Signature"),
-	}}
-	return types.NewCommit(height, 0,
-		types.BlockID{Hash: []byte(""), PartSetHeader: types.PartSetHeader{Hash: []byte(""), Total: 2}}, commitSigs)
+// make an extended commit with a single vote containing just the height and a
+// timestamp
+func makeTestExtCommit(height int64, timestamp time.Time) *types.ExtendedCommit {
+	return makeTestExtCommitWithNumSigs(height, timestamp, 1)
 }
 
-func makeTxs(height int64) (txs []types.Tx) {
-	for i := 0; i < 10; i++ {
-		txs = append(txs, types.Tx([]byte{byte(height), byte(i)}))
+func makeTestExtCommitWithNumSigs(height int64, timestamp time.Time, numSigs int) *types.ExtendedCommit {
+	extCommitSigs := []types.ExtendedCommitSig{}
+	for i := 0; i < numSigs; i++ {
+		extCommitSigs = append(extCommitSigs, types.ExtendedCommitSig{
+			CommitSig: types.CommitSig{
+				BlockIDFlag:      types.BlockIDFlagCommit,
+				ValidatorAddress: cmtrand.Bytes(crypto.AddressSize),
+				Timestamp:        timestamp,
+				Signature:        cmtrand.Bytes(64),
+			},
+			ExtensionSignature: []byte("ExtensionSignature"),
+		})
 	}
-	return txs
+	return &types.ExtendedCommit{
+		Height: height,
+		BlockID: types.BlockID{
+			Hash:          crypto.CRandBytes(32),
+			PartSetHeader: types.PartSetHeader{Hash: crypto.CRandBytes(32), Total: 2},
+		},
+		ExtendedSignatures: extCommitSigs,
+	}
 }
 
-func makeBlock(height int64, state sm.State, lastCommit *types.Commit) *types.Block {
-	block, _ := state.MakeBlock(height, makeTxs(height), lastCommit, nil, state.Validators.GetProposer().Address)
-	return block
-}
-
-func makeStateAndBlockStore(logger log.Logger) (sm.State, *BlockStore, cleanupFunc) {
-	config := cfg.ResetTestRoot("blockchain_reactor_test")
+func makeStateAndBlockStore() (sm.State, *BlockStore, cleanupFunc) {
+	config := test.ResetTestRoot("blockchain_reactor_test")
 	// blockDB := dbm.NewDebugDB("blockDB", dbm.NewMemDB())
 	// stateDB := dbm.NewDebugDB("stateDB", dbm.NewMemDB())
 	blockDB := dbm.NewMemDB()
@@ -71,7 +76,6 @@ func makeStateAndBlockStore(logger log.Logger) (sm.State, *BlockStore, cleanupFu
 }
 
 func TestLoadBlockStoreState(t *testing.T) {
-
 	type blockStoreTest struct {
 		testName string
 		bss      *cmtstore.BlockStoreState
@@ -79,17 +83,24 @@ func TestLoadBlockStoreState(t *testing.T) {
 	}
 
 	testCases := []blockStoreTest{
-		{"success", &cmtstore.BlockStoreState{Base: 100, Height: 1000},
-			cmtstore.BlockStoreState{Base: 100, Height: 1000}},
+		{
+			"success", &cmtstore.BlockStoreState{Base: 100, Height: 1000},
+			cmtstore.BlockStoreState{Base: 100, Height: 1000},
+		},
 		{"empty", &cmtstore.BlockStoreState{}, cmtstore.BlockStoreState{}},
 		{"no base", &cmtstore.BlockStoreState{Height: 1000}, cmtstore.BlockStoreState{Base: 1, Height: 1000}},
 	}
 
 	for _, tc := range testCases {
 		db := dbm.NewMemDB()
-		SaveBlockStoreState(tc.bss, db)
+		batch := db.NewBatch()
+		SaveBlockStoreStateBatch(tc.bss, batch)
+		err := batch.WriteSync()
+		require.NoError(t, err)
 		retrBSJ := LoadBlockStoreState(db)
 		assert.Equal(t, tc.want, retrBSJ, "expected the retrieved DBs to match: %s", tc.testName)
+		err = batch.Close()
+		require.NoError(t, err)
 	}
 }
 
@@ -130,37 +141,15 @@ func TestNewBlockStore(t *testing.T) {
 	assert.Equal(t, bs.Height(), int64(0), "expecting empty bytes to be unmarshaled alright")
 }
 
-func freshBlockStore() (*BlockStore, dbm.DB) {
+func newInMemoryBlockStore() (*BlockStore, dbm.DB) {
 	db := dbm.NewMemDB()
 	return NewBlockStore(db), db
-}
-
-var (
-	state       sm.State
-	block       *types.Block
-	partSet     *types.PartSet
-	part1       *types.Part
-	part2       *types.Part
-	seenCommit1 *types.Commit
-)
-
-func TestMain(m *testing.M) {
-	var cleanup cleanupFunc
-	state, _, cleanup = makeStateAndBlockStore(log.NewTMLogger(new(bytes.Buffer)))
-	block = makeBlock(1, state, new(types.Commit))
-	partSet = block.MakePartSet(2)
-	part1 = partSet.GetPart(0)
-	part2 = partSet.GetPart(1)
-	seenCommit1 = makeTestCommit(10, cmttime.Now())
-	code := m.Run()
-	cleanup()
-	os.Exit(code)
 }
 
 // TODO: This test should be simplified ...
 
 func TestBlockStoreSaveLoadBlock(t *testing.T) {
-	state, bs, cleanup := makeStateAndBlockStore(log.NewTMLogger(new(bytes.Buffer)))
+	state, bs, cleanup := makeStateAndBlockStore()
 	defer cleanup()
 	require.Equal(t, bs.Base(), int64(0), "initially the base should be zero")
 	require.Equal(t, bs.Height(), int64(0), "initially the height should be zero")
@@ -173,17 +162,22 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 		}
 	}
 
-	// save a block
-	block := makeBlock(bs.Height()+1, state, new(types.Commit))
-	validPartSet := block.MakePartSet(2)
-	seenCommit := makeTestCommit(10, cmttime.Now())
-	bs.SaveBlock(block, partSet, seenCommit)
+	// save a block big enough to have two block parts
+	txs := []types.Tx{make([]byte, types.BlockPartSizeBytes)} // TX taking one block part alone
+	block := state.MakeBlock(bs.Height()+1, txs, new(types.Commit), nil, state.Validators.GetProposer().Address)
+	validPartSet, err := block.MakePartSet(types.BlockPartSizeBytes)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, validPartSet.Total(), uint32(2))
+	part2 := validPartSet.GetPart(1)
+
+	seenCommit := makeTestExtCommit(block.Header.Height, cmttime.Now())
+	bs.SaveBlockWithExtendedCommit(block, validPartSet, seenCommit)
 	require.EqualValues(t, 1, bs.Base(), "expecting the new height to be changed")
 	require.EqualValues(t, block.Header.Height, bs.Height(), "expecting the new height to be changed")
 
 	incompletePartSet := types.NewPartSetFromHeader(types.PartSetHeader{Total: 2})
 	uncontiguousPartSet := types.NewPartSetFromHeader(types.PartSetHeader{Total: 0})
-	_, err := uncontiguousPartSet.AddPart(part2)
+	_, err = uncontiguousPartSet.AddPart(part2)
 	require.Error(t, err)
 
 	header1 := types.Header{
@@ -196,11 +190,11 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 
 	// End of setup, test data
 
-	commitAtH10 := makeTestCommit(10, cmttime.Now())
+	commitAtH10 := makeTestExtCommit(10, cmttime.Now()).ToCommit()
 	tuples := []struct {
 		block      *types.Block
 		parts      *types.PartSet
-		seenCommit *types.Commit
+		seenCommit *types.ExtendedCommit
 		wantPanic  string
 		wantErr    bool
 
@@ -213,7 +207,7 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 		{
 			block:      newBlock(header1, commitAtH10),
 			parts:      validPartSet,
-			seenCommit: seenCommit1,
+			seenCommit: seenCommit,
 		},
 
 		{
@@ -228,23 +222,25 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 					Height:          5,
 					ChainID:         "block_test",
 					Time:            cmttime.Now(),
-					ProposerAddress: cmtrand.Bytes(crypto.AddressSize)},
-				makeTestCommit(5, cmttime.Now()),
+					ProposerAddress: cmtrand.Bytes(crypto.AddressSize),
+				},
+				makeTestExtCommit(5, cmttime.Now()).ToCommit(),
 			),
 			parts:      validPartSet,
-			seenCommit: makeTestCommit(5, cmttime.Now()),
+			seenCommit: makeTestExtCommit(5, cmttime.Now()),
 		},
 
 		{
-			block:     newBlock(header1, commitAtH10),
-			parts:     incompletePartSet,
-			wantPanic: "only save complete block", // incomplete parts
+			block:      newBlock(header1, commitAtH10),
+			parts:      incompletePartSet,
+			wantPanic:  "only save complete block", // incomplete parts
+			seenCommit: makeTestExtCommit(10, cmttime.Now()),
 		},
 
 		{
 			block:             newBlock(header1, commitAtH10),
 			parts:             validPartSet,
-			seenCommit:        seenCommit1,
+			seenCommit:        seenCommit,
 			corruptCommitInDB: true, // Corrupt the DB's commit entry
 			wantPanic:         "error reading block commit",
 		},
@@ -252,7 +248,7 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 		{
 			block:            newBlock(header1, commitAtH10),
 			parts:            validPartSet,
-			seenCommit:       seenCommit1,
+			seenCommit:       seenCommit,
 			wantPanic:        "unmarshal to cmtproto.BlockMeta",
 			corruptBlockInDB: true, // Corrupt the DB's block entry
 		},
@@ -260,25 +256,25 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 		{
 			block:      newBlock(header1, commitAtH10),
 			parts:      validPartSet,
-			seenCommit: seenCommit1,
+			seenCommit: seenCommit,
 
 			// Expecting no error and we want a nil back
 			eraseSeenCommitInDB: true,
 		},
 
 		{
-			block:      newBlock(header1, commitAtH10),
+			block:      block,
 			parts:      validPartSet,
-			seenCommit: seenCommit1,
+			seenCommit: seenCommit,
 
 			corruptSeenCommitInDB: true,
 			wantPanic:             "error reading block seen commit",
 		},
 
 		{
-			block:      newBlock(header1, commitAtH10),
+			block:      block,
 			parts:      validPartSet,
-			seenCommit: seenCommit1,
+			seenCommit: seenCommit,
 
 			// Expecting no error and we want a nil back
 			eraseCommitInDB: true,
@@ -295,10 +291,10 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 
 	for i, tuple := range tuples {
 		tuple := tuple
-		bs, db := freshBlockStore()
+		bs, db := newInMemoryBlockStore()
 		// SaveBlock
 		res, err, panicErr := doFn(func() (interface{}, error) {
-			bs.SaveBlock(tuple.block, tuple.parts, tuple.seenCommit)
+			bs.SaveBlockWithExtendedCommit(tuple.block, tuple.parts, tuple.seenCommit)
 			if tuple.block == nil {
 				return nil, nil
 			}
@@ -330,8 +326,10 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 				require.NoError(t, err)
 			}
 			bCommit := bs.LoadBlockCommit(commitHeight)
-			return &quad{block: bBlock, seenCommit: bSeenCommit, commit: bCommit,
-				meta: bBlockMeta}, nil
+			return &quad{
+				block: bBlock, seenCommit: bSeenCommit, commit: bCommit,
+				meta: bBlockMeta,
+			}, nil
 		})
 
 		if subStr := tuple.wantPanic; subStr != "" {
@@ -368,8 +366,108 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 	}
 }
 
+// stripExtensions removes all VoteExtension data from an ExtendedCommit. This
+// is useful when dealing with an ExendedCommit but vote extension data is
+// expected to be absent.
+func stripExtensions(ec *types.ExtendedCommit) bool {
+	stripped := false
+	for idx := range ec.ExtendedSignatures {
+		if len(ec.ExtendedSignatures[idx].Extension) > 0 || len(ec.ExtendedSignatures[idx].ExtensionSignature) > 0 {
+			stripped = true
+		}
+		ec.ExtendedSignatures[idx].Extension = nil
+		ec.ExtendedSignatures[idx].ExtensionSignature = nil
+	}
+	return stripped
+}
+
+// TestSaveBlockWithExtendedCommitPanicOnAbsentExtension tests that saving a
+// block with an extended commit panics when the extension data is absent.
+func TestSaveBlockWithExtendedCommitPanicOnAbsentExtension(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		malleateCommit func(*types.ExtendedCommit)
+		shouldPanic    bool
+	}{
+		{
+			name:           "basic save",
+			malleateCommit: func(_ *types.ExtendedCommit) {},
+			shouldPanic:    false,
+		},
+		{
+			name: "save commit with no extensions",
+			malleateCommit: func(c *types.ExtendedCommit) {
+				stripExtensions(c)
+			},
+			shouldPanic: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			state, bs, cleanup := makeStateAndBlockStore()
+			defer cleanup()
+			h := bs.Height() + 1
+			block := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+
+			seenCommit := makeTestExtCommit(block.Header.Height, cmttime.Now())
+			ps, err := block.MakePartSet(types.BlockPartSizeBytes)
+			require.NoError(t, err)
+			testCase.malleateCommit(seenCommit)
+			if testCase.shouldPanic {
+				require.Panics(t, func() {
+					bs.SaveBlockWithExtendedCommit(block, ps, seenCommit)
+				})
+			} else {
+				bs.SaveBlockWithExtendedCommit(block, ps, seenCommit)
+			}
+		})
+	}
+}
+
+// TestLoadBlockExtendedCommit tests loading the extended commit for a previously
+// saved block. The load method should return nil when only a commit was saved and
+// return the extended commit otherwise.
+func TestLoadBlockExtendedCommit(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		saveExtended bool
+		expectResult bool
+	}{
+		{
+			name:         "save commit",
+			saveExtended: false,
+			expectResult: false,
+		},
+		{
+			name:         "save extended commit",
+			saveExtended: true,
+			expectResult: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			state, bs, cleanup := makeStateAndBlockStore()
+			defer cleanup()
+			h := bs.Height() + 1
+			block := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+			seenCommit := makeTestExtCommit(block.Header.Height, cmttime.Now())
+			ps, err := block.MakePartSet(types.BlockPartSizeBytes)
+			require.NoError(t, err)
+			if testCase.saveExtended {
+				bs.SaveBlockWithExtendedCommit(block, ps, seenCommit)
+			} else {
+				bs.SaveBlock(block, ps, seenCommit.ToCommit())
+			}
+			res := bs.LoadBlockExtendedCommit(block.Height)
+			if testCase.expectResult {
+				require.Equal(t, seenCommit, res)
+			} else {
+				require.Nil(t, res)
+			}
+		})
+	}
+}
+
 func TestLoadBaseMeta(t *testing.T) {
-	config := cfg.ResetTestRoot("blockchain_reactor_test")
+	config := test.ResetTestRoot("blockchain_reactor_test")
 	defer os.RemoveAll(config.RootDir)
 	stateStore := sm.NewStore(dbm.NewMemDB(), sm.StoreOptions{
 		DiscardABCIResponses: false,
@@ -379,27 +477,36 @@ func TestLoadBaseMeta(t *testing.T) {
 	bs := NewBlockStore(dbm.NewMemDB())
 
 	for h := int64(1); h <= 10; h++ {
-		block := makeBlock(h, state, new(types.Commit))
-		partSet := block.MakePartSet(2)
-		seenCommit := makeTestCommit(h, cmttime.Now())
-		bs.SaveBlock(block, partSet, seenCommit)
+		block := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+		partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
+		require.NoError(t, err)
+		seenCommit := makeTestExtCommit(h, cmttime.Now())
+		bs.SaveBlockWithExtendedCommit(block, partSet, seenCommit)
 	}
 
-	_, err = bs.PruneBlocks(4)
+	_, _, err = bs.PruneBlocks(4, state)
 	require.NoError(t, err)
 
 	baseBlock := bs.LoadBaseMeta()
 	assert.EqualValues(t, 4, baseBlock.Header.Height)
 	assert.EqualValues(t, 4, bs.Base())
+
+	require.NoError(t, bs.DeleteLatestBlock())
+	require.EqualValues(t, 9, bs.Height())
 }
 
 func TestLoadBlockPart(t *testing.T) {
-	bs, db := freshBlockStore()
-	height, index := int64(10), 1
+	config := test.ResetTestRoot("blockchain_reactor_test")
+
+	bs, db := newInMemoryBlockStore()
+	const height, index = 10, 1
 	loadPart := func() (interface{}, error) {
 		part := bs.LoadBlockPart(height, index)
 		return part, nil
 	}
+
+	state, err := sm.MakeGenesisStateFromFile(config.GenesisFile())
+	require.NoError(t, err)
 
 	// Initially no contents.
 	// 1. Requesting for a non-existent block shouldn't fail
@@ -408,13 +515,18 @@ func TestLoadBlockPart(t *testing.T) {
 	require.Nil(t, res, "a non-existent block part should return nil")
 
 	// 2. Next save a corrupted block then try to load it
-	err := db.Set(calcBlockPartKey(height, index), []byte("CometBFT"))
+	err = db.Set(calcBlockPartKey(height, index), []byte("CometBFT"))
 	require.NoError(t, err)
 	res, _, panicErr = doFn(loadPart)
 	require.NotNil(t, panicErr, "expecting a non-nil panic")
 	require.Contains(t, panicErr.Error(), "unmarshal to cmtproto.Part failed")
 
 	// 3. A good block serialized and saved to the DB should be retrievable
+	block := state.MakeBlock(height, nil, new(types.Commit), nil, state.Validators.GetProposer().Address)
+	partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
+	require.NoError(t, err)
+	part1 := partSet.GetPart(0)
+
 	pb1, err := part1.ToProto()
 	require.NoError(t, err)
 	err = db.Set(calcBlockPartKey(height, index), mustEncode(pb1))
@@ -422,12 +534,18 @@ func TestLoadBlockPart(t *testing.T) {
 	gotPart, _, panicErr := doFn(loadPart)
 	require.Nil(t, panicErr, "an existent and proper block should not panic")
 	require.Nil(t, res, "a properly saved block should return a proper block")
-	require.Equal(t, gotPart.(*types.Part), part1,
+
+	// Having to do this because of https://github.com/stretchr/testify/issues/1141
+	gotPartJSON, err := json.Marshal(gotPart.(*types.Part))
+	require.NoError(t, err)
+	part1JSON, err := json.Marshal(part1)
+	require.NoError(t, err)
+	require.JSONEq(t, string(gotPartJSON), string(part1JSON),
 		"expecting successful retrieval of previously saved block")
 }
 
 func TestPruneBlocks(t *testing.T) {
-	config := cfg.ResetTestRoot("blockchain_reactor_test")
+	config := test.ResetTestRoot("blockchain_reactor_test")
 	defer os.RemoveAll(config.RootDir)
 	stateStore := sm.NewStore(dbm.NewMemDB(), sm.StoreOptions{
 		DiscardABCIResponses: false,
@@ -441,44 +559,49 @@ func TestPruneBlocks(t *testing.T) {
 	assert.EqualValues(t, 0, bs.Size())
 
 	// pruning an empty store should error, even when pruning to 0
-	_, err = bs.PruneBlocks(1)
+	_, _, err = bs.PruneBlocks(1, state)
 	require.Error(t, err)
 
-	_, err = bs.PruneBlocks(0)
+	_, _, err = bs.PruneBlocks(0, state)
 	require.Error(t, err)
 
 	// make more than 1000 blocks, to test batch deletions
 	for h := int64(1); h <= 1500; h++ {
-		block := makeBlock(h, state, new(types.Commit))
-		partSet := block.MakePartSet(2)
-		seenCommit := makeTestCommit(h, cmttime.Now())
-		bs.SaveBlock(block, partSet, seenCommit)
+		block := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+		partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
+		require.NoError(t, err)
+		seenCommit := makeTestExtCommit(h, cmttime.Now())
+		bs.SaveBlockWithExtendedCommit(block, partSet, seenCommit)
 	}
 
 	assert.EqualValues(t, 1, bs.Base())
 	assert.EqualValues(t, 1500, bs.Height())
 	assert.EqualValues(t, 1500, bs.Size())
 
-	prunedBlock := bs.LoadBlock(1199)
+	state.LastBlockTime = time.Date(2020, 1, 1, 1, 0, 0, 0, time.UTC)
+	state.LastBlockHeight = 1500
+
+	state.ConsensusParams.Evidence.MaxAgeNumBlocks = 400
+	state.ConsensusParams.Evidence.MaxAgeDuration = 1 * time.Second
 
 	// Check that basic pruning works
-	pruned, err := bs.PruneBlocks(1200)
+	pruned, evidenceRetainHeight, err := bs.PruneBlocks(1200, state)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1199, pruned)
 	assert.EqualValues(t, 1200, bs.Base())
 	assert.EqualValues(t, 1500, bs.Height())
 	assert.EqualValues(t, 301, bs.Size())
-	assert.EqualValues(t, cmtstore.BlockStoreState{
-		Base:   1200,
-		Height: 1500,
-	}, LoadBlockStoreState(db))
+	assert.EqualValues(t, 1100, evidenceRetainHeight)
 
 	require.NotNil(t, bs.LoadBlock(1200))
 	require.Nil(t, bs.LoadBlock(1199))
-	require.Nil(t, bs.LoadBlockByHash(prunedBlock.Hash()))
-	require.Nil(t, bs.LoadBlockCommit(1199))
-	require.Nil(t, bs.LoadBlockMeta(1199))
-	require.Nil(t, bs.LoadBlockPart(1199, 1))
+
+	// The header and commit for heights 1100 onwards
+	// need to remain to verify evidence
+	require.NotNil(t, bs.LoadBlockMeta(1100))
+	require.Nil(t, bs.LoadBlockMeta(1099))
+	require.NotNil(t, bs.LoadBlockCommit(1100))
+	require.Nil(t, bs.LoadBlockCommit(1099))
 
 	for i := int64(1); i < 1200; i++ {
 		require.Nil(t, bs.LoadBlock(i))
@@ -488,26 +611,33 @@ func TestPruneBlocks(t *testing.T) {
 	}
 
 	// Pruning below the current base should error
-	_, err = bs.PruneBlocks(1199)
+	_, _, err = bs.PruneBlocks(1199, state)
 	require.Error(t, err)
 
 	// Pruning to the current base should work
-	pruned, err = bs.PruneBlocks(1200)
+	pruned, _, err = bs.PruneBlocks(1200, state)
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, pruned)
 
 	// Pruning again should work
-	pruned, err = bs.PruneBlocks(1300)
+	pruned, _, err = bs.PruneBlocks(1300, state)
 	require.NoError(t, err)
 	assert.EqualValues(t, 100, pruned)
 	assert.EqualValues(t, 1300, bs.Base())
 
+	// we should still have the header and the commit
+	// as they're needed for evidence
+	require.NotNil(t, bs.LoadBlockMeta(1100))
+	require.Nil(t, bs.LoadBlockMeta(1099))
+	require.NotNil(t, bs.LoadBlockCommit(1100))
+	require.Nil(t, bs.LoadBlockCommit(1099))
+
 	// Pruning beyond the current height should error
-	_, err = bs.PruneBlocks(1501)
+	_, _, err = bs.PruneBlocks(1501, state)
 	require.Error(t, err)
 
 	// Pruning to the current height should work
-	pruned, err = bs.PruneBlocks(1500)
+	pruned, _, err = bs.PruneBlocks(1500, state)
 	require.NoError(t, err)
 	assert.EqualValues(t, 200, pruned)
 	assert.Nil(t, bs.LoadBlock(1499))
@@ -516,7 +646,7 @@ func TestPruneBlocks(t *testing.T) {
 }
 
 func TestLoadBlockMeta(t *testing.T) {
-	bs, db := freshBlockStore()
+	bs, db := newInMemoryBlockStore()
 	height := int64(10)
 	loadMeta := func() (interface{}, error) {
 		meta := bs.LoadBlockMeta(height)
@@ -539,7 +669,9 @@ func TestLoadBlockMeta(t *testing.T) {
 	// 3. A good blockMeta serialized and saved to the DB should be retrievable
 	meta := &types.BlockMeta{Header: types.Header{
 		Version: cmtversion.Consensus{
-			Block: version.BlockProtocol, App: 0}, Height: 1, ProposerAddress: cmtrand.Bytes(crypto.AddressSize)}}
+			Block: version.BlockProtocol, App: 0,
+		}, Height: 1, ProposerAddress: cmtrand.Bytes(crypto.AddressSize),
+	}}
 	pbm := meta.ToProto()
 	err = db.Set(calcBlockMetaKey(height), mustEncode(pbm))
 	require.NoError(t, err)
@@ -554,15 +686,38 @@ func TestLoadBlockMeta(t *testing.T) {
 	}
 }
 
+func TestLoadBlockMetaByHash(t *testing.T) {
+	config := test.ResetTestRoot("blockchain_reactor_test")
+	defer os.RemoveAll(config.RootDir)
+	stateStore := sm.NewStore(dbm.NewMemDB(), sm.StoreOptions{
+		DiscardABCIResponses: false,
+	})
+	state, err := stateStore.LoadFromDBOrGenesisFile(config.GenesisFile())
+	require.NoError(t, err)
+	bs := NewBlockStore(dbm.NewMemDB())
+
+	b1 := state.MakeBlock(state.LastBlockHeight+1, test.MakeNTxs(state.LastBlockHeight+1, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+	partSet, err := b1.MakePartSet(types.BlockPartSizeBytes)
+	require.NoError(t, err)
+	seenCommit := makeTestExtCommit(1, cmttime.Now())
+	bs.SaveBlock(b1, partSet, seenCommit.ToCommit())
+
+	baseBlock := bs.LoadBlockMetaByHash(b1.Hash())
+	assert.EqualValues(t, b1.Header.Height, baseBlock.Header.Height)
+	assert.EqualValues(t, b1.Header.LastBlockID, baseBlock.Header.LastBlockID)
+	assert.EqualValues(t, b1.Header.ChainID, baseBlock.Header.ChainID)
+}
+
 func TestBlockFetchAtHeight(t *testing.T) {
-	state, bs, cleanup := makeStateAndBlockStore(log.NewTMLogger(new(bytes.Buffer)))
+	state, bs, cleanup := makeStateAndBlockStore()
 	defer cleanup()
 	require.Equal(t, bs.Height(), int64(0), "initially the height should be zero")
-	block := makeBlock(bs.Height()+1, state, new(types.Commit))
+	block := state.MakeBlock(bs.Height()+1, nil, new(types.Commit), nil, state.Validators.GetProposer().Address)
 
-	partSet := block.MakePartSet(2)
-	seenCommit := makeTestCommit(10, cmttime.Now())
-	bs.SaveBlock(block, partSet, seenCommit)
+	partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
+	require.NoError(t, err)
+	seenCommit := makeTestExtCommit(block.Header.Height, cmttime.Now())
+	bs.SaveBlockWithExtendedCommit(block, partSet, seenCommit)
 	require.Equal(t, bs.Height(), block.Header.Height, "expecting the new height to be changed")
 
 	blockAtHeight := bs.LoadBlock(bs.Height())

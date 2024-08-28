@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/tendermint/tendermint/crypto/tmhash"
-	cmtcrypto "github.com/tendermint/tendermint/proto/tendermint/crypto"
+	"github.com/cometbft/cometbft/crypto/tmhash"
+	cmtcrypto "github.com/cometbft/cometbft/proto/tendermint/crypto"
 )
 
 const ProofOpValue = "simple:v"
@@ -93,8 +93,12 @@ func (op ValueOp) Run(args [][]byte) ([][]byte, error) {
 		return nil, fmt.Errorf("leaf hash mismatch: want %X got %X", op.Proof.LeafHash, kvhash)
 	}
 
+	rootHash, err := op.Proof.computeRootHash()
+	if err != nil {
+		return nil, err
+	}
 	return [][]byte{
-		op.Proof.ComputeRootHash(),
+		rootHash,
 	}, nil
 }
 

@@ -8,11 +8,12 @@ import (
 
 	"golang.org/x/net/netutil"
 
-	"github.com/gogo/protobuf/proto"
-	"github.com/tendermint/tendermint/crypto"
-	"github.com/tendermint/tendermint/libs/protoio"
-	"github.com/tendermint/tendermint/p2p/conn"
-	tmp2p "github.com/tendermint/tendermint/proto/tendermint/p2p"
+	"github.com/cosmos/gogoproto/proto"
+
+	"github.com/cometbft/cometbft/crypto"
+	"github.com/cometbft/cometbft/libs/protoio"
+	"github.com/cometbft/cometbft/p2p/conn"
+	tmp2p "github.com/cometbft/cometbft/proto/tendermint/p2p"
 )
 
 const (
@@ -21,7 +22,7 @@ const (
 	defaultHandshakeTimeout = 3 * time.Second
 )
 
-// IPResolver is a behaviour subset of net.Resolver.
+// IPResolver is a behavior subset of net.Resolver.
 type IPResolver interface {
 	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
 }
@@ -73,7 +74,7 @@ type Transport interface {
 }
 
 // transportLifecycle bundles the methods for callers to control start and stop
-// behaviour.
+// behavior.
 type transportLifecycle interface {
 	Close() error
 	Listen(NetAddress) error
@@ -215,6 +216,11 @@ func (mt *MultiplexTransport) Dial(
 	c, err := addr.DialTimeout(mt.dialTimeout)
 	if err != nil {
 		return nil, err
+	}
+
+	if mt.mConfig.TestFuzz {
+		// so we have time to do peer handshakes and get set up.
+		c = FuzzConnAfterFromConfig(c, 10*time.Second, mt.mConfig.TestFuzzConfig)
 	}
 
 	// TODO(xla): Evaluate if we should apply filters if we explicitly dial.

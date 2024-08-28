@@ -8,32 +8,36 @@ import (
 	"strings"
 	"time"
 
-	abci "github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/libs/log"
+	abci "github.com/cometbft/cometbft/abci/types"
+	"github.com/cometbft/cometbft/internal/test"
+	"github.com/cometbft/cometbft/libs/log"
 
-	cfg "github.com/tendermint/tendermint/config"
-	cmtnet "github.com/tendermint/tendermint/libs/net"
-	nm "github.com/tendermint/tendermint/node"
-	"github.com/tendermint/tendermint/p2p"
-	"github.com/tendermint/tendermint/privval"
-	"github.com/tendermint/tendermint/proxy"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	core_grpc "github.com/tendermint/tendermint/rpc/grpc"
-	rpcclient "github.com/tendermint/tendermint/rpc/jsonrpc/client"
+	cfg "github.com/cometbft/cometbft/config"
+	cmtnet "github.com/cometbft/cometbft/libs/net"
+	nm "github.com/cometbft/cometbft/node"
+	"github.com/cometbft/cometbft/p2p"
+	"github.com/cometbft/cometbft/privval"
+	"github.com/cometbft/cometbft/proxy"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	core_grpc "github.com/cometbft/cometbft/rpc/grpc"
+	rpcclient "github.com/cometbft/cometbft/rpc/jsonrpc/client"
 )
 
 // Options helps with specifying some parameters for our RPC testing for greater
 // control.
 type Options struct {
-	suppressStdout bool
-	recreateConfig bool
+	suppressStdout  bool
+	recreateConfig  bool
+	maxReqBatchSize int
 }
 
-var globalConfig *cfg.Config
-var defaultOptions = Options{
-	suppressStdout: false,
-	recreateConfig: false,
-}
+var (
+	globalConfig   *cfg.Config
+	defaultOptions = Options{
+		suppressStdout: false,
+		recreateConfig: false,
+	}
+)
 
 func waitForRPC() {
 	laddr := GetConfig().RPC.ListenAddress
@@ -91,11 +95,11 @@ func makeAddrs() (string, string, string) {
 
 func createConfig() *cfg.Config {
 	pathname := makePathname()
-	c := cfg.ResetTestRoot(pathname)
+	c := test.ResetTestRoot(pathname)
 
 	// and we use random ports to run in parallel
-	cmt, rpc, grpc := makeAddrs()
-	c.P2P.ListenAddress = cmt
+	tm, rpc, grpc := makeAddrs()
+	c.P2P.ListenAddress = tm
 	c.RPC.ListenAddress = rpc
 	c.RPC.CORSAllowedOrigins = []string{"https://cometbft.com/"}
 	c.RPC.GRPCListenAddress = grpc
@@ -112,6 +116,7 @@ func GetConfig(forceCreate ...bool) *cfg.Config {
 
 func GetGRPCClient() core_grpc.BroadcastAPIClient {
 	grpcAddr := globalConfig.RPC.GRPCListenAddress
+	//nolint:staticcheck // SA1019: core_grpc.StartGRPCClient is deprecated: A new gRPC API will be introduced after v0.38.
 	return core_grpc.StartGRPCClient(grpcAddr)
 }
 
@@ -159,6 +164,9 @@ func NewTendermint(app abci.Application, opts *Options) *nm.Node {
 		logger = log.NewTMLogger(log.NewSyncWriter(os.Stdout))
 		logger = log.NewFilter(logger, log.AllowError())
 	}
+	if opts.maxReqBatchSize > 0 {
+		config.RPC.MaxRequestBatchSize = opts.maxReqBatchSize
+	}
 	pvKeyFile := config.PrivValidatorKeyFile()
 	pvKeyStateFile := config.PrivValidatorStateFile()
 	pv := privval.LoadOrGenFilePV(pvKeyFile, pvKeyStateFile)
@@ -169,7 +177,7 @@ func NewTendermint(app abci.Application, opts *Options) *nm.Node {
 	}
 	node, err := nm.NewNode(config, pv, nodeKey, papp,
 		nm.DefaultGenesisDocProviderFunc(config),
-		nm.DefaultDBProvider,
+		cfg.DefaultDBProvider,
 		nm.DefaultMetricsProvider(config.Instrumentation),
 		logger)
 	if err != nil {
@@ -188,4 +196,9 @@ func SuppressStdout(o *Options) {
 // time, instead of treating it as a global singleton.
 func RecreateConfig(o *Options) {
 	o.recreateConfig = true
+}
+
+// MaxReqBatchSize is an option to limit the maximum number of requests per batch.
+func MaxReqBatchSize(o *Options) {
+	o.maxReqBatchSize = 2
 }

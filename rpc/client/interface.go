@@ -23,10 +23,10 @@ implementation.
 import (
 	"context"
 
-	"github.com/tendermint/tendermint/libs/bytes"
-	"github.com/tendermint/tendermint/libs/service"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	"github.com/tendermint/tendermint/types"
+	"github.com/cometbft/cometbft/libs/bytes"
+	"github.com/cometbft/cometbft/libs/service"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	"github.com/cometbft/cometbft/types"
 )
 
 // Client wraps most important rpc calls a client would make if you want to
@@ -67,12 +67,14 @@ type SignClient interface {
 	Block(ctx context.Context, height *int64) (*ctypes.ResultBlock, error)
 	BlockByHash(ctx context.Context, hash []byte) (*ctypes.ResultBlock, error)
 	BlockResults(ctx context.Context, height *int64) (*ctypes.ResultBlockResults, error)
+	Header(ctx context.Context, height *int64) (*ctypes.ResultHeader, error)
+	HeaderByHash(ctx context.Context, hash bytes.HexBytes) (*ctypes.ResultHeader, error)
 	Commit(ctx context.Context, height *int64) (*ctypes.ResultCommit, error)
 	Validators(ctx context.Context, height *int64, page, perPage *int) (*ctypes.ResultValidators, error)
 	Tx(ctx context.Context, hash []byte, prove bool) (*ctypes.ResultTx, error)
 
 	// TxSearch defines a method to search for a paginated set of transactions by
-	// DeliverTx event search criteria.
+	// transaction event search criteria.
 	TxSearch(
 		ctx context.Context,
 		query string,
@@ -81,8 +83,8 @@ type SignClient interface {
 		orderBy string,
 	) (*ctypes.ResultTxSearch, error)
 
-	// BlockSearch defines a method to search for a paginated set of blocks by
-	// BeginBlock and EndBlock event search criteria.
+	// BlockSearch defines a method to search for a paginated set of blocks based
+	// from FinalizeBlock event search criteria.
 	BlockSearch(
 		ctx context.Context,
 		query string,
@@ -138,7 +140,7 @@ type MempoolClient interface {
 }
 
 // EvidenceClient is used for submitting an evidence of the malicious
-// behaviour.
+// behavior.
 type EvidenceClient interface {
 	BroadcastEvidence(context.Context, types.Evidence) (*ctypes.ResultBroadcastEvidence, error)
 }

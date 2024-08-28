@@ -5,19 +5,20 @@ import (
 	"fmt"
 	"strings"
 
-	dbm "github.com/cometbft/cometbft-db"
 	"github.com/spf13/cobra"
 
-	abcitypes "github.com/tendermint/tendermint/abci/types"
-	cmtcfg "github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/libs/progressbar"
-	"github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/state/indexer"
-	blockidxkv "github.com/tendermint/tendermint/state/indexer/block/kv"
-	"github.com/tendermint/tendermint/state/indexer/sink/psql"
-	"github.com/tendermint/tendermint/state/txindex"
-	"github.com/tendermint/tendermint/state/txindex/kv"
-	"github.com/tendermint/tendermint/types"
+	dbm "github.com/cometbft/cometbft-db"
+
+	abcitypes "github.com/cometbft/cometbft/abci/types"
+	cmtcfg "github.com/cometbft/cometbft/config"
+	"github.com/cometbft/cometbft/libs/progressbar"
+	"github.com/cometbft/cometbft/state"
+	"github.com/cometbft/cometbft/state/indexer"
+	blockidxkv "github.com/cometbft/cometbft/state/indexer/block/kv"
+	"github.com/cometbft/cometbft/state/indexer/sink/psql"
+	"github.com/cometbft/cometbft/state/txindex"
+	"github.com/cometbft/cometbft/state/txindex/kv"
+	"github.com/cometbft/cometbft/types"
 )
 
 const (
@@ -31,17 +32,18 @@ var (
 
 // ReIndexEventCmd constructs a command to re-index events in a block height interval.
 var ReIndexEventCmd = &cobra.Command{
-	Use:   "reindex-event",
-	Short: "Re-index events to the event store backends",
+	Use:     "reindex-event",
+	Aliases: []string{"reindex_event"},
+	Short:   "reindex events to the event store backends",
 	Long: `
-reindex-event is an offline tooling to re-index block and tx events to the eventsinks.
-You can run this command when the event store backend dropped/disconnected or you want to
+reindex-event is an offline tooling to re-index block and tx events to the eventsinks,
+you can run this command when the event store backend dropped/disconnected or you want to 
 replace the backend. The default start-height is 0, meaning the tooling will start 
 reindex from the base block height(inclusive); and the default end-height is 0, meaning 
 the tooling will reindex until the latest block height(inclusive). User can omit
 either or both arguments.
 
-Note: This operation requires ABCIResponses. Do not set DiscardABCIResponses to true if you
+Note: This operation requires ABCI Responses. Do not set DiscardABCIResponses to true if you
 want to use this command.
 	`,
 	Example: `
@@ -57,12 +59,18 @@ want to use this command.
 			return
 		}
 
+		state, err := ss.Load()
+		if err != nil {
+			fmt.Println(reindexFailed, err)
+			return
+		}
+
 		if err := checkValidHeight(bs); err != nil {
 			fmt.Println(reindexFailed, err)
 			return
 		}
 
-		bi, ti, err := loadEventSinks(config)
+		bi, ti, err := loadEventSinks(config, state.ChainID)
 		if err != nil {
 			fmt.Println(reindexFailed, err)
 			return
@@ -94,7 +102,7 @@ func init() {
 	ReIndexEventCmd.Flags().Int64Var(&endHeight, "end-height", 0, "the block height would like to finish for re-index")
 }
 
-func loadEventSinks(cfg *cmtcfg.Config) (indexer.BlockIndexer, txindex.TxIndexer, error) {
+func loadEventSinks(cfg *cmtcfg.Config, chainID string) (indexer.BlockIndexer, txindex.TxIndexer, error) {
 	switch strings.ToLower(cfg.TxIndex.Indexer) {
 	case "null":
 		return nil, nil, errors.New("found null event sink, please check the tx-index section in the config.toml")
@@ -103,7 +111,7 @@ func loadEventSinks(cfg *cmtcfg.Config) (indexer.BlockIndexer, txindex.TxIndexer
 		if conn == "" {
 			return nil, nil, errors.New("the psql connection settings cannot be empty")
 		}
-		es, err := psql.NewEventSink(conn, cfg.ChainID())
+		es, err := psql.NewEventSink(conn, chainID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -137,38 +145,38 @@ func eventReIndex(cmd *cobra.Command, args eventReIndexArgs) error {
 
 	fmt.Println("start re-indexing events:")
 	defer bar.Finish()
-	for i := args.startHeight; i <= args.endHeight; i++ {
+	for height := args.startHeight; height <= args.endHeight; height++ {
 		select {
 		case <-cmd.Context().Done():
-			return fmt.Errorf("event re-index terminated at height %d: %w", i, cmd.Context().Err())
+			return fmt.Errorf("event re-index terminated at height %d: %w", height, cmd.Context().Err())
 		default:
-			b := args.blockStore.LoadBlock(i)
-			if b == nil {
-				return fmt.Errorf("not able to load block at height %d from the blockstore", i)
+			block := args.blockStore.LoadBlock(height)
+			if block == nil {
+				return fmt.Errorf("not able to load block at height %d from the blockstore", height)
 			}
 
-			r, err := args.stateStore.LoadABCIResponses(i)
+			resp, err := args.stateStore.LoadFinalizeBlockResponse(height)
 			if err != nil {
-				return fmt.Errorf("not able to load ABCI Response at height %d from the statestore", i)
+				return fmt.Errorf("not able to load ABCI Response at height %d from the statestore", height)
 			}
 
-			e := types.EventDataNewBlockHeader{
-				Header:           b.Header,
-				NumTxs:           int64(len(b.Txs)),
-				ResultBeginBlock: *r.BeginBlock,
-				ResultEndBlock:   *r.EndBlock,
+			e := types.EventDataNewBlockEvents{
+				Height: height,
+				Events: resp.Events,
 			}
+
+			numTxs := len(resp.TxResults)
 
 			var batch *txindex.Batch
-			if e.NumTxs > 0 {
-				batch = txindex.NewBatch(e.NumTxs)
+			if numTxs > 0 {
+				batch = txindex.NewBatch(int64(numTxs))
 
-				for i := range b.Data.Txs {
+				for idx, txResult := range resp.TxResults {
 					tr := abcitypes.TxResult{
-						Height: b.Height,
-						Index:  uint32(i),
-						Tx:     b.Data.Txs[i],
-						Result: *(r.DeliverTxs[i]),
+						Height: height,
+						Index:  uint32(idx),
+						Tx:     block.Txs[idx],
+						Result: *txResult,
 					}
 
 					if err = batch.Add(&tr); err != nil {
@@ -177,16 +185,16 @@ func eventReIndex(cmd *cobra.Command, args eventReIndexArgs) error {
 				}
 
 				if err := args.txIndexer.AddBatch(batch); err != nil {
-					return fmt.Errorf("tx event re-index at height %d failed: %w", i, err)
+					return fmt.Errorf("tx event re-index at height %d failed: %w", height, err)
 				}
 			}
 
 			if err := args.blockIndexer.Index(e); err != nil {
-				return fmt.Errorf("block event re-index at height %d failed: %w", i, err)
+				return fmt.Errorf("block event re-index at height %d failed: %w", height, err)
 			}
 		}
 
-		bar.Play(i)
+		bar.Play(height)
 	}
 
 	return nil

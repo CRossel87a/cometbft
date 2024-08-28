@@ -2,14 +2,15 @@ package types
 
 import (
 	"bytes"
+	"math/rand"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	ctest "github.com/tendermint/tendermint/libs/test"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
+	ctest "github.com/cometbft/cometbft/libs/test"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 )
 
 func makeTxs(cnt, size int) Txs {
@@ -18,11 +19,6 @@ func makeTxs(cnt, size int) Txs {
 		txs[i] = cmtrand.Bytes(size)
 	}
 	return txs
-}
-
-func randInt(low, high int) int {
-	off := cmtrand.Int() % (high - low)
-	return low + off
 }
 
 func TestTxIndex(t *testing.T) {
@@ -148,4 +144,8 @@ func assertBadProof(t *testing.T, root []byte, bad []byte, good TxProof) {
 			}
 		}
 	}
+}
+
+func randInt(low, high int) int {
+	return rand.Intn(high-low) + low
 }

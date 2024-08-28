@@ -9,10 +9,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
-	cmtsync "github.com/tendermint/tendermint/libs/sync"
-	types "github.com/tendermint/tendermint/rpc/jsonrpc/types"
+	cmtsync "github.com/cometbft/cometbft/libs/sync"
+	types "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 )
 
 const (
@@ -23,6 +24,8 @@ const (
 	protoTCP   = "tcp"
 	protoUNIX  = "unix"
 )
+
+var endsWithPortPattern = regexp.MustCompile(`:[0-9]+$`)
 
 //-------------------------------------------------------------
 
@@ -89,8 +92,19 @@ func (u parsedURL) GetTrimmedHostWithPath() string {
 
 // GetDialAddress returns the endpoint to dial for the parsed URL
 func (u parsedURL) GetDialAddress() string {
-	// if it's not a unix socket we return the host, example: localhost:443
+	// if it's not a unix socket we return the host with port, example: localhost:443
 	if !u.isUnixSocket {
+		hasPort := endsWithPortPattern.MatchString(u.Host)
+		if !hasPort {
+			// http and ws default to port 80, https and wss default to port 443
+			// https://www.rfc-editor.org/rfc/rfc9110#section-4.2
+			// https://www.rfc-editor.org/rfc/rfc6455.html#section-3
+			if u.Scheme == protoHTTP || u.Scheme == protoWS {
+				return u.Host + `:80`
+			} else if u.Scheme == protoHTTPS || u.Scheme == protoWSS {
+				return u.Host + `:443`
+			}
+		}
 		return u.Host
 	}
 	// otherwise we return the path of the unix socket, ex /tmp/socket
@@ -138,6 +152,8 @@ var _ HTTPClient = (*Client)(nil)
 // RPC endpoint.
 var _ Caller = (*Client)(nil)
 var _ Caller = (*RequestBatch)(nil)
+
+var _ fmt.Stringer = (*Client)(nil)
 
 // New returns a Client pointed at the given address.
 // An error is returned on invalid remote. The function panics when remote is nil.
@@ -214,15 +230,26 @@ func (c *Client) Call(
 	if err != nil {
 		return nil, fmt.Errorf("post failed: %w", err)
 	}
-
 	defer httpResponse.Body.Close()
 
 	responseBytes, err := io.ReadAll(httpResponse.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("%s. Failed to read response body: %w", getHTTPRespErrPrefix(httpResponse), err)
 	}
 
-	return unmarshalResponseBytes(responseBytes, id, result)
+	res, err := unmarshalResponseBytes(responseBytes, id, result)
+	if err != nil {
+		return nil, fmt.Errorf("%s. %w", getHTTPRespErrPrefix(httpResponse), err)
+	}
+	return res, nil
+}
+
+func getHTTPRespErrPrefix(resp *http.Response) string {
+	return fmt.Sprintf("error in json rpc client, with http response metadata: (Status: %s, Protocol %s)", resp.Status, resp.Proto)
+}
+
+func (c *Client) String() string {
+	return fmt.Sprintf("&Client{user=%v, addr=%v, client=%v, nextReqID=%v}", c.username, c.address, c.client, c.nextReqID)
 }
 
 // NewRequestBatch starts a batch of requests for this client.
@@ -399,6 +426,7 @@ func DefaultHTTPClient(remoteAddr string) (*http.Client, error) {
 			// Set to true to prevent GZIP-bomb DoS attacks
 			DisableCompression: true,
 			Dial:               dialFn,
+			Proxy:              http.ProxyFromEnvironment,
 		},
 	}
 

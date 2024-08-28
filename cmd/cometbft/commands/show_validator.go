@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	cmtjson "github.com/tendermint/tendermint/libs/json"
-	cmtos "github.com/tendermint/tendermint/libs/os"
-	"github.com/tendermint/tendermint/privval"
+	cmtjson "github.com/cometbft/cometbft/libs/json"
+	cmtos "github.com/cometbft/cometbft/libs/os"
+	"github.com/cometbft/cometbft/privval"
 )
 
 // ShowValidatorCmd adds capabilities for showing the validator info.
@@ -16,10 +16,9 @@ var ShowValidatorCmd = &cobra.Command{
 	Aliases: []string{"show_validator"},
 	Short:   "Show this node's validator info",
 	RunE:    showValidator,
-	PreRun:  deprecateSnakeCase,
 }
 
-func showValidator(cmd *cobra.Command, args []string) error {
+func showValidator(*cobra.Command, []string) error {
 	keyFilePath := config.PrivValidatorKeyFile()
 	if !cmtos.FileExists(keyFilePath) {
 		return fmt.Errorf("private validator file %s does not exist", keyFilePath)

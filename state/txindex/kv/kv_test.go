@@ -6,17 +6,17 @@ import (
 	"os"
 	"testing"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/cosmos/gogoproto/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	db "github.com/cometbft/cometbft-db"
 
-	abci "github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/libs/pubsub/query"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	"github.com/tendermint/tendermint/state/txindex"
-	"github.com/tendermint/tendermint/types"
+	abci "github.com/cometbft/cometbft/abci/types"
+	"github.com/cometbft/cometbft/libs/pubsub/query"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
+	"github.com/cometbft/cometbft/state/txindex"
+	"github.com/cometbft/cometbft/types"
 )
 
 func TestTxIndex(t *testing.T) {
@@ -27,7 +27,7 @@ func TestTxIndex(t *testing.T) {
 		Height: 1,
 		Index:  0,
 		Tx:     tx,
-		Result: abci.ResponseDeliverTx{
+		Result: abci.ExecTxResult{
 			Data: []byte{0},
 			Code: abci.CodeTypeOK, Log: "", Events: nil,
 		},
@@ -50,7 +50,7 @@ func TestTxIndex(t *testing.T) {
 		Height: 1,
 		Index:  0,
 		Tx:     tx2,
-		Result: abci.ResponseDeliverTx{
+		Result: abci.ExecTxResult{
 			Data: []byte{0},
 			Code: abci.CodeTypeOK, Log: "", Events: nil,
 		},
@@ -69,10 +69,9 @@ func TestTxSearch(t *testing.T) {
 	indexer := NewTxIndex(db.NewMemDB())
 
 	txResult := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("1"), Index: true}}},
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("owner"), Value: []byte("Ivan"), Index: true}}},
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("owner"), Value: []byte("/Ivan/"), Index: true}, {Key: []byte("number"), Value: []byte("10"), Index: true}}},
-		{Type: "", Attributes: []abci.EventAttribute{{Key: []byte("not_allowed"), Value: []byte("Vlad"), Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "1", Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "owner", Value: "/Ivan/", Index: true}}},
+		{Type: "", Attributes: []abci.EventAttribute{{Key: "not_allowed", Value: "Vlad", Index: true}}},
 	})
 	hash := types.Tx(txResult.Tx).Hash()
 
@@ -90,8 +89,9 @@ func TestTxSearch(t *testing.T) {
 		// search by exact match (one key)
 		{"account.number = 1", 1},
 		// search by exact match (two keys)
-		{"account.number = 1 AND account.owner = 'Ivan'", 1},
-		{"account.owner = 'Ivan' AND account.number = 1", 1},
+		{"account.number = 1 AND account.owner = 'Ivan'", 0},
+		{"account.owner = 'Ivan' AND account.number = 1", 0},
+		{"account.owner = '/Ivan/'", 1},
 		// search by exact match (two keys)
 		{"account.number = 1 AND account.owner = 'Vlad'", 0},
 		{"account.owner = 'Vlad' AND account.number = 1", 0},
@@ -99,23 +99,13 @@ func TestTxSearch(t *testing.T) {
 		{"account.owner = 'Vlad' AND account.number >= 1", 0},
 		{"account.number <= 0", 0},
 		{"account.number <= 0 AND account.owner = 'Ivan'", 0},
-		{"account.number < 10000 AND account.owner = 'Ivan'", 1},
+		{"account.number < 10000 AND account.owner = 'Ivan'", 0},
 		// search using a prefix of the stored value
 		{"account.owner = 'Iv'", 0},
-		// search for owner with slash in name
-		{"account.owner = '/Ivan/'", 1},
-		// search for owner with slash in name and match events
-		{"match.events = 1 AND account.owner = '/Ivan/' AND account.number = 10", 1},
-		// search for owner with slash in name and match events with no match
-		{"match.events = 1 AND account.owner = '/Ivan/' AND account.number = 1", 0},
-		// search for owner with slash in name with CONTAINS
-		{"account.owner CONTAINS 'an'", 1},
-		// search for owner with slash in name with CONTAINS and match events
-		{"match.events = 1 AND account.owner CONTAINS 'an'", 1},
 		// search by range
 		{"account.number >= 1 AND account.number <= 5", 1},
 		// search by range and another key
-		{"account.number >= 1 AND account.owner = 'Ivan' AND account.number <= 5", 1},
+		{"account.number >= 1 AND account.owner = 'Ivan' AND account.number <= 5", 0},
 		// search by range (lower bound)
 		{"account.number >= 1", 1},
 		// search by range (upper bound)
@@ -125,12 +115,12 @@ func TestTxSearch(t *testing.T) {
 		{"not_allowed = 'boom'", 0},
 		{"not_allowed = 'Vlad'", 0},
 		// search for not existing tx result
-		{"account.number >= 2 AND account.number <= 5", 0},
+		{"account.number >= 2 AND account.number <= 5 AND tx.height > 0", 0},
 		// search using not existing key
 		{"account.date >= TIME 2013-05-03T14:45:00Z", 0},
 		// search using CONTAINS
 		{"account.owner CONTAINS 'an'", 1},
-		// search for non existing value using CONTAINS
+		//	search for non existing value using CONTAINS
 		{"account.owner CONTAINS 'Vlad'", 0},
 		{"account.owner CONTAINS 'Ivann'", 0},
 		{"account.owner CONTAINS 'IIvan'", 0},
@@ -151,7 +141,7 @@ func TestTxSearch(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.q, func(t *testing.T) {
-			results, err := indexer.Search(ctx, query.MustParse(tc.q))
+			results, err := indexer.Search(ctx, query.MustCompile(tc.q))
 			assert.NoError(t, err)
 
 			assert.Len(t, results, tc.resultsLength)
@@ -165,14 +155,13 @@ func TestTxSearch(t *testing.T) {
 }
 
 func TestTxSearchEventMatch(t *testing.T) {
-
 	indexer := NewTxIndex(db.NewMemDB())
 
 	txResult := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("1"), Index: true}, {Key: []byte("owner"), Value: []byte("Ana"), Index: true}}},
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("2"), Index: true}, {Key: []byte("owner"), Value: []byte("Ivan"), Index: true}}},
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("3"), Index: false}, {Key: []byte("owner"), Value: []byte("Mickey"), Index: false}}},
-		{Type: "", Attributes: []abci.EventAttribute{{Key: []byte("not_allowed"), Value: []byte("Vlad"), Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "1", Index: true}, {Key: "owner", Value: "Ana", Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "2", Index: true}, {Key: "owner", Value: "/Ivan/.test", Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "3", Index: false}, {Key: "owner", Value: "Mickey", Index: false}}},
+		{Type: "", Attributes: []abci.EventAttribute{{Key: "not_allowed", Value: "Vlad", Index: true}}},
 	})
 
 	err := indexer.Index(txResult)
@@ -182,68 +171,60 @@ func TestTxSearchEventMatch(t *testing.T) {
 		q             string
 		resultsLength int
 	}{
+		"Return all events from a height": {
+			q:             "tx.height = 1",
+			resultsLength: 1,
+		},
 		"Don't match non-indexed events": {
-			q:             "match.events = 1 AND account.number = 3 AND account.owner = 'Mickey'",
+			q:             "account.number = 3 AND account.owner = 'Mickey'",
 			resultsLength: 0,
 		},
 		"Return all events from a height with range": {
-			q:             "match.events = 1 AND tx.height > 0",
+			q:             "tx.height > 0",
 			resultsLength: 1,
 		},
 		"Return all events from a height with range 2": {
-			q:             "match.events = 1 AND tx.height <= 1",
-			resultsLength: 1,
-		},
-		"Return all events from a height": {
-			q:             "match.events = 1 AND tx.height = 1",
+			q:             "tx.height <= 1",
 			resultsLength: 1,
 		},
 		"Return all events from a height (deduplicate height)": {
-			q:             "match.events = 1 AND tx.height = 1 AND tx.height = 1",
+			q:             "tx.height = 1 AND tx.height = 1",
 			resultsLength: 1,
 		},
 		"Match attributes with height range and event": {
-			q:             "match.events = 1 AND tx.height < 2 AND tx.height > 0 AND account.number = 1 AND account.owner CONTAINS 'Ana' AND account.owner CONTAINS 'An'",
+			q:             "tx.height < 2 AND tx.height > 0 AND account.number > 0 AND account.number <= 1 AND account.owner CONTAINS 'Ana'",
+			resultsLength: 1,
+		},
+		"Match attributes with multiple CONTAIN and height range": {
+			q:             "tx.height < 2 AND tx.height > 0 AND account.number = 1 AND account.owner CONTAINS 'Ana' AND account.owner CONTAINS 'An'",
 			resultsLength: 1,
 		},
 		"Match attributes with height range and event - no match": {
-			q:             "match.events = 1 AND tx.height < 2 AND tx.height > 0 AND account.number = 2 AND account.owner = 'Ana'",
-			resultsLength: 0,
-		},
-		"Deduplucation test - match events only at the beginning": {
-			q:             "tx.height < 2 AND tx.height > 0 AND account.number = 2 AND account.owner = 'Ana' AND match.events = 1",
-			resultsLength: 1,
-		},
-		"Deduplucation test - should return nothing if attribute repeats multiple times": {
-			q:             "match.events = 0 AND tx.height < 2 AND account.number = 3 AND account.number = 2 AND account.number = 5",
-			resultsLength: 0,
-		},
-		"Deduplucation test - should return nothing if attribute repeats multiple times with match events": {
-			q:             "match.events = 1 AND tx.height < 2 AND account.number = 3 AND account.number = 2 AND account.number = 5",
-			resultsLength: 0,
-		},
-		"Deduplucation test - match events multiple": {
-			q:             "match.events = 1 AND tx.height < 2 AND tx.height > 0 AND account.number = 2 AND account.owner = 'Ana' AND match.events = 1",
+			q:             "tx.height < 2 AND tx.height > 0 AND account.number = 2 AND account.owner = 'Ana'",
 			resultsLength: 0,
 		},
 		"Match attributes with event": {
 			q:             "account.number = 2 AND account.owner = 'Ana' AND tx.height = 1",
-			resultsLength: 1,
-		},
-		"Match range w/o match events": {
-			q:             "account.number < 2 AND account.owner = 'Ivan'",
-			resultsLength: 1,
-		},
-		" Match range with match events set to 0": {
-			q:             "match.events = 0 AND account.number < 2 AND account.owner = 'Ivan' AND tx.height > 0",
-			resultsLength: 1,
-		},
-		" Match range with match events": {
-			q:             "match.events = 1 AND account.number < 2 AND account.owner = 'Ivan' AND tx.height > 0",
 			resultsLength: 0,
 		},
-		" Match range with match events 2": {
-			q:             "match.events = 1 AND account.number <= 2 AND account.owner = 'Ivan' AND tx.height > 0",
+		"Deduplication test - should return nothing if attribute repeats multiple times": {
+			q:             "tx.height < 2 AND account.number = 3 AND account.number = 2 AND account.number = 5",
+			resultsLength: 0,
+		},
+		" Match range with special character": {
+			q:             "account.number < 2 AND account.owner = '/Ivan/.test'",
+			resultsLength: 0,
+		},
+		" Match range with special character 2": {
+			q:             "account.number <= 2 AND account.owner = '/Ivan/.test' AND tx.height > 0",
+			resultsLength: 1,
+		},
+		" Match range with contains with multiple items": {
+			q:             "account.number <= 2 AND account.owner CONTAINS '/Iv' AND account.owner CONTAINS 'an' AND tx.height = 1",
+			resultsLength: 1,
+		},
+		" Match range with contains": {
+			q:             "account.number <= 2 AND account.owner CONTAINS 'an' AND tx.height > 0",
 			resultsLength: 1,
 		},
 	}
@@ -253,7 +234,7 @@ func TestTxSearchEventMatch(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.q, func(t *testing.T) {
-			results, err := indexer.Search(ctx, query.MustParse(tc.q))
+			results, err := indexer.Search(ctx, query.MustCompile(tc.q))
 			assert.NoError(t, err)
 
 			assert.Len(t, results, tc.resultsLength)
@@ -265,20 +246,103 @@ func TestTxSearchEventMatch(t *testing.T) {
 		})
 	}
 }
+
+func TestTxSearchEventMatchByHeight(t *testing.T) {
+
+	indexer := NewTxIndex(db.NewMemDB())
+
+	txResult := txResultWithEvents([]abci.Event{
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "1", Index: true}, {Key: "owner", Value: "Ana", Index: true}}},
+	})
+
+	err := indexer.Index(txResult)
+	require.NoError(t, err)
+
+	txResult10 := txResultWithEvents([]abci.Event{
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "1", Index: true}, {Key: "owner", Value: "/Ivan/.test", Index: true}}},
+	})
+	txResult10.Tx = types.Tx("HELLO WORLD 10")
+	txResult10.Height = 10
+
+	err = indexer.Index(txResult10)
+	require.NoError(t, err)
+
+	testCases := map[string]struct {
+		q             string
+		resultsLength int
+	}{
+		"Return all events from a height 1": {
+			q:             "tx.height = 1",
+			resultsLength: 1,
+		},
+		"Return all events from a height 10": {
+			q:             "tx.height = 10",
+			resultsLength: 1,
+		},
+		"Return all events from a height 5": {
+			q:             "tx.height = 5",
+			resultsLength: 0,
+		},
+		"Return all events from a height in [2; 5]": {
+			q:             "tx.height >= 2 AND tx.height <= 5",
+			resultsLength: 0,
+		},
+		"Return all events from a height in [1; 5]": {
+			q:             "tx.height >= 1 AND tx.height <= 5",
+			resultsLength: 1,
+		},
+		"Return all events from a height in [1; 10]": {
+			q:             "tx.height >= 1 AND tx.height <= 10",
+			resultsLength: 2,
+		},
+		"Return all events from a height in [1; 5] by account.number": {
+			q:             "tx.height >= 1 AND tx.height <= 5 AND account.number=1",
+			resultsLength: 1,
+		},
+		"Return all events from a height in [1; 10] by account.number 2": {
+			q:             "tx.height >= 1 AND tx.height <= 10 AND account.number=1",
+			resultsLength: 2,
+		},
+	}
+
+	ctx := context.Background()
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.q, func(t *testing.T) {
+			results, err := indexer.Search(ctx, query.MustCompile(tc.q))
+			assert.NoError(t, err)
+
+			assert.Len(t, results, tc.resultsLength)
+			if tc.resultsLength > 0 {
+				for _, txr := range results {
+					if txr.Height == 1 {
+						assert.True(t, proto.Equal(txResult, txr))
+					} else if txr.Height == 10 {
+						assert.True(t, proto.Equal(txResult10, txr))
+					} else {
+						assert.True(t, false)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestTxSearchWithCancelation(t *testing.T) {
 	indexer := NewTxIndex(db.NewMemDB())
 
 	txResult := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("1"), Index: true}}},
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("owner"), Value: []byte("Ivan"), Index: true}}},
-		{Type: "", Attributes: []abci.EventAttribute{{Key: []byte("not_allowed"), Value: []byte("Vlad"), Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "1", Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "owner", Value: "Ivan", Index: true}}},
+		{Type: "", Attributes: []abci.EventAttribute{{Key: "not_allowed", Value: "Vlad", Index: true}}},
 	})
 	err := indexer.Index(txResult)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	results, err := indexer.Search(ctx, query.MustParse("account.number = 1"))
+	results, err := indexer.Search(ctx, query.MustCompile(`account.number = 1`))
 	assert.NoError(t, err)
 	assert.Empty(t, results)
 }
@@ -288,7 +352,7 @@ func TestTxSearchDeprecatedIndexing(t *testing.T) {
 
 	// index tx using events indexing (composite key)
 	txResult1 := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("1"), Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "1", Index: true}}},
 	})
 	hash1 := types.Tx(txResult1.Tx).Hash()
 
@@ -351,7 +415,7 @@ func TestTxSearchDeprecatedIndexing(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.q, func(t *testing.T) {
-			results, err := indexer.Search(ctx, query.MustParse(tc.q))
+			results, err := indexer.Search(ctx, query.MustCompile(tc.q))
 			require.NoError(t, err)
 			for _, txr := range results {
 				for _, tr := range tc.results {
@@ -366,66 +430,67 @@ func TestTxSearchOneTxWithMultipleSameTagsButDifferentValues(t *testing.T) {
 	indexer := NewTxIndex(db.NewMemDB())
 
 	txResult := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("1"), Index: true}}},
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("2"), Index: true}}},
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("3"), Index: false}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "1", Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "2", Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "3", Index: false}}},
 	})
 
 	err := indexer.Index(txResult)
 	require.NoError(t, err)
 
 	testCases := []struct {
+		name  string
 		q     string
 		found bool
 	}{
 		{
-			q:     "match.events = 1 AND account.number >= 1",
+			q:     "account.number >= 1",
 			found: true,
 		},
 		{
-			q:     "match.events = 1 AND account.number > 2",
+			q:     "account.number > 2",
 			found: false,
 		},
 		{
-			q:     "match.events = 1 AND account.number >= 1 AND tx.height = 3 AND tx.height > 0",
+			q:     "account.number >= 1 AND tx.height = 3 AND tx.height > 0",
 			found: true,
 		},
 		{
-			q:     "match.events = 1 AND account.number >= 1 AND tx.height > 0 AND tx.height = 3",
+			q:     "account.number >= 1 AND tx.height > 0 AND tx.height = 3",
 			found: true,
 		},
 
-		// {
-		// 	q:     "match.events = 1 AND account.number >= 1 AND tx.height = 3  AND tx.height = 2 AND tx.height = 1",
-		// 	found: true,
-		// },
+		{
+			q:     "account.number >= 1 AND tx.height = 1  AND tx.height = 2 AND tx.height = 3",
+			found: true,
+		},
 
 		{
-			q:     "match.events = 1 AND account.number >= 1 AND tx.height = 1 AND tx.height = 2 AND tx.height = 1",
-			found: true,
-		},
-		{
-			q:     "match.events = 1 AND account.number >= 1 AND tx.height = 3",
+			q:     "account.number >= 1 AND tx.height = 3  AND tx.height = 2 AND tx.height = 1",
 			found: false,
 		},
 		{
-			q:     "match.events = 1 AND account.number > 1 AND tx.height < 2",
-			found: true,
-		},
-		{
-			q:     "match.events = 1 AND account.number >= 2",
-			found: true,
-		},
-		{
-			q:     "match.events = 1 AND account.number <= 1",
-			found: true,
-		},
-		{
-			q:     "match.events = 1 AND account.number = 'something'",
+			q:     "account.number >= 1 AND tx.height = 3",
 			found: false,
 		},
 		{
-			q:     "match.events = 1 AND account.number CONTAINS 'bla'",
+			q:     "account.number > 1 AND tx.height < 2",
+			found: true,
+		},
+		{
+			q:     "account.number >= 2",
+			found: true,
+		},
+		{
+			q:     "account.number <= 1",
+			found: true,
+		},
+		{
+			q:     "account.number = 'something'",
+			found: false,
+		},
+		{
+			q:     "account.number CONTAINS 'bla'",
 			found: false,
 		},
 	}
@@ -433,15 +498,15 @@ func TestTxSearchOneTxWithMultipleSameTagsButDifferentValues(t *testing.T) {
 	ctx := context.Background()
 
 	for _, tc := range testCases {
-		results, err := indexer.Search(ctx, query.MustParse(tc.q))
+		results, err := indexer.Search(ctx, query.MustCompile(tc.q))
 		assert.NoError(t, err)
-
-		len := 0
+		n := 0
 		if tc.found {
-			len = 1
+			n = 1
 		}
-		assert.Len(t, results, len)
+		assert.Len(t, results, n)
 		assert.True(t, !tc.found || proto.Equal(txResult, results[0]))
+
 	}
 }
 
@@ -460,7 +525,7 @@ func TestTxIndexDuplicatePreviouslySuccessful(t *testing.T) {
 				Height: 1,
 				Index:  0,
 				Tx:     mockTx,
-				Result: abci.ResponseDeliverTx{
+				Result: abci.ExecTxResult{
 					Code: abci.CodeTypeOK,
 				},
 			},
@@ -468,7 +533,7 @@ func TestTxIndexDuplicatePreviouslySuccessful(t *testing.T) {
 				Height: 2,
 				Index:  0,
 				Tx:     mockTx,
-				Result: abci.ResponseDeliverTx{
+				Result: abci.ExecTxResult{
 					Code: abci.CodeTypeOK + 1,
 				},
 			},
@@ -480,7 +545,7 @@ func TestTxIndexDuplicatePreviouslySuccessful(t *testing.T) {
 				Height: 1,
 				Index:  0,
 				Tx:     mockTx,
-				Result: abci.ResponseDeliverTx{
+				Result: abci.ExecTxResult{
 					Code: abci.CodeTypeOK + 1,
 				},
 			},
@@ -488,7 +553,7 @@ func TestTxIndexDuplicatePreviouslySuccessful(t *testing.T) {
 				Height: 2,
 				Index:  0,
 				Tx:     mockTx,
-				Result: abci.ResponseDeliverTx{
+				Result: abci.ExecTxResult{
 					Code: abci.CodeTypeOK + 1,
 				},
 			},
@@ -500,7 +565,7 @@ func TestTxIndexDuplicatePreviouslySuccessful(t *testing.T) {
 				Height: 1,
 				Index:  0,
 				Tx:     mockTx,
-				Result: abci.ResponseDeliverTx{
+				Result: abci.ExecTxResult{
 					Code: abci.CodeTypeOK,
 				},
 			},
@@ -508,7 +573,7 @@ func TestTxIndexDuplicatePreviouslySuccessful(t *testing.T) {
 				Height: 2,
 				Index:  0,
 				Tx:     mockTx,
-				Result: abci.ResponseDeliverTx{
+				Result: abci.ExecTxResult{
 					Code: abci.CodeTypeOK,
 				},
 			},
@@ -547,7 +612,7 @@ func TestTxSearchMultipleTxs(t *testing.T) {
 
 	// indexed first, but bigger height (to test the order of transactions)
 	txResult := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("1"), Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "1", Index: true}}},
 	})
 
 	txResult.Tx = types.Tx("Bob's account")
@@ -558,7 +623,7 @@ func TestTxSearchMultipleTxs(t *testing.T) {
 
 	// indexed second, but smaller height (to test the order of transactions)
 	txResult2 := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("2"), Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "2", Index: true}}},
 	})
 	txResult2.Tx = types.Tx("Alice's account")
 	txResult2.Height = 1
@@ -569,7 +634,7 @@ func TestTxSearchMultipleTxs(t *testing.T) {
 
 	// indexed third (to test the order of transactions)
 	txResult3 := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number"), Value: []byte("3"), Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: "3", Index: true}}},
 	})
 	txResult3.Tx = types.Tx("Jack's account")
 	txResult3.Height = 1
@@ -580,7 +645,7 @@ func TestTxSearchMultipleTxs(t *testing.T) {
 	// indexed fourth (to test we don't include txs with similar events)
 	// https://github.com/tendermint/tendermint/issues/2908
 	txResult4 := txResultWithEvents([]abci.Event{
-		{Type: "account", Attributes: []abci.EventAttribute{{Key: []byte("number.id"), Value: []byte("1"), Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number.id", Value: "1", Index: true}}},
 	})
 	txResult4.Tx = types.Tx("Mike's account")
 	txResult4.Height = 2
@@ -590,7 +655,7 @@ func TestTxSearchMultipleTxs(t *testing.T) {
 
 	ctx := context.Background()
 
-	results, err := indexer.Search(ctx, query.MustParse("account.number >= 1"))
+	results, err := indexer.Search(ctx, query.MustCompile(`account.number >= 1`))
 	assert.NoError(t, err)
 
 	require.Len(t, results, 3)
@@ -602,7 +667,7 @@ func txResultWithEvents(events []abci.Event) *abci.TxResult {
 		Height: 1,
 		Index:  0,
 		Tx:     tx,
-		Result: abci.ResponseDeliverTx{
+		Result: abci.ExecTxResult{
 			Data:   []byte{0},
 			Code:   abci.CodeTypeOK,
 			Log:    "",
@@ -628,7 +693,7 @@ func benchmarkTxIndex(txsCount int64, b *testing.B) {
 			Height: 1,
 			Index:  txIndex,
 			Tx:     tx,
-			Result: abci.ResponseDeliverTx{
+			Result: abci.ExecTxResult{
 				Data:   []byte{0},
 				Code:   abci.CodeTypeOK,
 				Log:    "",
@@ -648,6 +713,84 @@ func benchmarkTxIndex(txsCount int64, b *testing.B) {
 	}
 	if err != nil {
 		b.Fatal(err)
+	}
+}
+
+func TestBigInt(t *testing.T) {
+	indexer := NewTxIndex(db.NewMemDB())
+
+	bigInt := "10000000000000000000"
+	bigIntPlus1 := "10000000000000000001"
+	bigFloat := bigInt + ".76"
+	bigFloatLower := bigInt + ".1"
+	bigFloatSmaller := "9999999999999999999" + ".1"
+	bigIntSmaller := "9999999999999999999"
+
+	txResult := txResultWithEvents([]abci.Event{
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: bigInt, Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: bigFloatSmaller, Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: bigIntPlus1, Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: bigFloatLower, Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "owner", Value: "/Ivan/", Index: true}}},
+		{Type: "", Attributes: []abci.EventAttribute{{Key: "not_allowed", Value: "Vlad", Index: true}}},
+	})
+	hash := types.Tx(txResult.Tx).Hash()
+
+	err := indexer.Index(txResult)
+
+	require.NoError(t, err)
+
+	txResult2 := txResultWithEvents([]abci.Event{
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: bigFloat, Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: bigFloat, Index: true}, {Key: "amount", Value: "5", Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: bigIntSmaller, Index: true}}},
+		{Type: "account", Attributes: []abci.EventAttribute{{Key: "number", Value: bigInt, Index: true}, {Key: "amount", Value: "3", Index: true}}}})
+
+	txResult2.Tx = types.Tx("NEW TX")
+	txResult2.Height = 2
+	txResult2.Index = 2
+
+	hash2 := types.Tx(txResult2.Tx).Hash()
+
+	err = indexer.Index(txResult2)
+	require.NoError(t, err)
+	testCases := []struct {
+		q             string
+		txRes         *abci.TxResult
+		resultsLength int
+	}{
+		//	search by hash
+		{fmt.Sprintf("tx.hash = '%X'", hash), txResult, 1},
+		// search by hash (lower)
+		{fmt.Sprintf("tx.hash = '%x'", hash), txResult, 1},
+		{fmt.Sprintf("tx.hash = '%x'", hash2), txResult2, 1},
+		// search by exact match (one key) - bigint
+		{"account.number >= " + bigInt, nil, 2},
+		// search by exact match (one key) - bigint range
+		{"account.number >= " + bigInt + " AND tx.height > 0", nil, 2},
+		{"account.number >= " + bigInt + " AND tx.height > 0 AND account.owner = '/Ivan/'", nil, 0},
+		// Floats are not parsed
+		{"account.number >= " + bigInt + " AND tx.height > 0 AND account.amount > 4", txResult2, 1},
+		{"account.number >= " + bigInt + " AND tx.height > 0 AND account.amount = 5", txResult2, 1},
+		{"account.number >= " + bigInt + " AND account.amount <= 5", txResult2, 1},
+		{"account.number > " + bigFloatSmaller + " AND account.amount = 3", txResult2, 1},
+		{"account.number < " + bigInt + " AND tx.height >= 1", nil, 2},
+		{"account.number < " + bigInt + " AND tx.height = 1", nil, 1},
+		{"account.number < " + bigInt + " AND tx.height = 2", nil, 1},
+	}
+
+	ctx := context.Background()
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.q, func(t *testing.T) {
+			results, err := indexer.Search(ctx, query.MustCompile(tc.q))
+			assert.NoError(t, err)
+			assert.Len(t, results, tc.resultsLength)
+			if tc.resultsLength > 0 && tc.txRes != nil {
+				assert.True(t, proto.Equal(results[0], tc.txRes))
+			}
+		})
 	}
 }
 

@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/libs/log"
-	cmtpubsub "github.com/tendermint/tendermint/libs/pubsub"
-	"github.com/tendermint/tendermint/libs/service"
+	"github.com/cometbft/cometbft/abci/types"
+	"github.com/cometbft/cometbft/libs/log"
+	cmtpubsub "github.com/cometbft/cometbft/libs/pubsub"
+	"github.com/cometbft/cometbft/libs/service"
 )
 
 const defaultCapacity = 0
@@ -23,7 +23,7 @@ type EventBusSubscriber interface {
 
 type Subscription interface {
 	Out() <-chan cmtpubsub.Message
-	Cancelled() <-chan struct{}
+	Canceled() <-chan struct{}
 	Err() error
 }
 
@@ -109,22 +109,20 @@ func (b *EventBus) Publish(eventType string, eventData TMEventData) error {
 // map of stringified events where each key is composed of the event
 // type and each of the event's attributes keys in the form of
 // "{event.Type}.{attribute.Key}" and the value is each attribute's value.
-func (b *EventBus) validateAndStringifyEvents(events []types.Event, logger log.Logger) map[string][]string {
+func (*EventBus) validateAndStringifyEvents(events []types.Event) map[string][]string {
 	result := make(map[string][]string)
 	for _, event := range events {
 		if len(event.Type) == 0 {
-			logger.Debug("Got an event with an empty type (skipping)", "event", event)
 			continue
 		}
 
 		for _, attr := range event.Attributes {
 			if len(attr.Key) == 0 {
-				logger.Debug("Got an event attribute with an empty key(skipping)", "event", event)
 				continue
 			}
 
-			compositeTag := fmt.Sprintf("%s.%s", event.Type, string(attr.Key))
-			result[compositeTag] = append(result[compositeTag], string(attr.Value))
+			compositeTag := fmt.Sprintf("%s.%s", event.Type, attr.Key)
+			result[compositeTag] = append(result[compositeTag], attr.Value)
 		}
 	}
 
@@ -134,9 +132,7 @@ func (b *EventBus) validateAndStringifyEvents(events []types.Event, logger log.L
 func (b *EventBus) PublishEventNewBlock(data EventDataNewBlock) error {
 	// no explicit deadline for publishing events
 	ctx := context.Background()
-
-	resultEvents := append(data.ResultBeginBlock.Events, data.ResultEndBlock.Events...)
-	events := b.validateAndStringifyEvents(resultEvents, b.Logger.With("block", data.Block.StringShort()))
+	events := b.validateAndStringifyEvents(data.ResultFinalizeBlock.Events)
 
 	// add predefined new block event
 	events[EventTypeKey] = append(events[EventTypeKey], EventNewBlock)
@@ -144,18 +140,20 @@ func (b *EventBus) PublishEventNewBlock(data EventDataNewBlock) error {
 	return b.pubsub.PublishWithEvents(ctx, data, events)
 }
 
-func (b *EventBus) PublishEventNewBlockHeader(data EventDataNewBlockHeader) error {
+func (b *EventBus) PublishEventNewBlockEvents(data EventDataNewBlockEvents) error {
 	// no explicit deadline for publishing events
 	ctx := context.Background()
 
-	resultTags := append(data.ResultBeginBlock.Events, data.ResultEndBlock.Events...)
-	// TODO: Create StringShort method for Header and use it in logger.
-	events := b.validateAndStringifyEvents(resultTags, b.Logger.With("header", data.Header))
+	events := b.validateAndStringifyEvents(data.Events)
 
-	// add predefined new block header event
-	events[EventTypeKey] = append(events[EventTypeKey], EventNewBlockHeader)
+	// add predefined new block event
+	events[EventTypeKey] = append(events[EventTypeKey], EventNewBlockEvents)
 
 	return b.pubsub.PublishWithEvents(ctx, data, events)
+}
+
+func (b *EventBus) PublishEventNewBlockHeader(data EventDataNewBlockHeader) error {
+	return b.Publish(EventNewBlockHeader, data)
 }
 
 func (b *EventBus) PublishEventNewEvidence(evidence EventDataNewEvidence) error {
@@ -177,7 +175,7 @@ func (b *EventBus) PublishEventTx(data EventDataTx) error {
 	// no explicit deadline for publishing events
 	ctx := context.Background()
 
-	events := b.validateAndStringifyEvents(data.Result.Events, b.Logger.With("tx", data.Tx))
+	events := b.validateAndStringifyEvents(data.Result.Events)
 
 	// add predefined compositeKeys
 	events[EventTypeKey] = append(events[EventTypeKey], EventTx)
@@ -231,78 +229,82 @@ func (b *EventBus) PublishEventValidatorSetUpdates(data EventDataValidatorSetUpd
 type NopEventBus struct{}
 
 func (NopEventBus) Subscribe(
-	ctx context.Context,
-	subscriber string,
-	query cmtpubsub.Query,
-	out chan<- interface{},
+	context.Context,
+	string,
+	cmtpubsub.Query,
+	chan<- interface{},
 ) error {
 	return nil
 }
 
-func (NopEventBus) Unsubscribe(ctx context.Context, subscriber string, query cmtpubsub.Query) error {
+func (NopEventBus) Unsubscribe(context.Context, string, cmtpubsub.Query) error {
 	return nil
 }
 
-func (NopEventBus) UnsubscribeAll(ctx context.Context, subscriber string) error {
+func (NopEventBus) UnsubscribeAll(context.Context, string) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventNewBlock(data EventDataNewBlock) error {
+func (NopEventBus) PublishEventNewBlock(EventDataNewBlock) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventNewBlockHeader(data EventDataNewBlockHeader) error {
+func (NopEventBus) PublishEventNewBlockHeader(EventDataNewBlockHeader) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventNewEvidence(evidence EventDataNewEvidence) error {
+func (NopEventBus) PublishEventNewBlockEvents(EventDataNewBlockEvents) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventVote(data EventDataVote) error {
+func (NopEventBus) PublishEventNewEvidence(EventDataNewEvidence) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventTx(data EventDataTx) error {
+func (NopEventBus) PublishEventVote(EventDataVote) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventNewRoundStep(data EventDataRoundState) error {
+func (NopEventBus) PublishEventTx(EventDataTx) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventTimeoutPropose(data EventDataRoundState) error {
+func (NopEventBus) PublishEventNewRoundStep(EventDataRoundState) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventTimeoutWait(data EventDataRoundState) error {
+func (NopEventBus) PublishEventTimeoutPropose(EventDataRoundState) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventNewRound(data EventDataRoundState) error {
+func (NopEventBus) PublishEventTimeoutWait(EventDataRoundState) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventCompleteProposal(data EventDataRoundState) error {
+func (NopEventBus) PublishEventNewRound(EventDataRoundState) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventPolka(data EventDataRoundState) error {
+func (NopEventBus) PublishEventCompleteProposal(EventDataRoundState) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventUnlock(data EventDataRoundState) error {
+func (NopEventBus) PublishEventPolka(EventDataRoundState) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventRelock(data EventDataRoundState) error {
+func (NopEventBus) PublishEventUnlock(EventDataRoundState) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventLock(data EventDataRoundState) error {
+func (NopEventBus) PublishEventRelock(EventDataRoundState) error {
 	return nil
 }
 
-func (NopEventBus) PublishEventValidatorSetUpdates(data EventDataValidatorSetUpdates) error {
+func (NopEventBus) PublishEventLock(EventDataRoundState) error {
+	return nil
+}
+
+func (NopEventBus) PublishEventValidatorSetUpdates(EventDataValidatorSetUpdates) error {
 	return nil
 }

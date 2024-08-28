@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	cfg "github.com/tendermint/tendermint/config"
-	cmtos "github.com/tendermint/tendermint/libs/os"
-	nm "github.com/tendermint/tendermint/node"
+	cfg "github.com/cometbft/cometbft/config"
+	cmtos "github.com/cometbft/cometbft/libs/os"
+	nm "github.com/cometbft/cometbft/node"
 )
 
 var (
@@ -31,7 +31,6 @@ func AddNodeFlags(cmd *cobra.Command) {
 		"socket address to listen on for connections from external priv_validator process")
 
 	// node flags
-	cmd.Flags().Bool("fast_sync", config.FastSyncMode, "fast blockchain syncing")
 	cmd.Flags().BytesHexVar(
 		&genesisHash,
 		"genesis_hash",
@@ -46,7 +45,7 @@ func AddNodeFlags(cmd *cobra.Command) {
 		"proxy_app",
 		config.ProxyApp,
 		"proxy app address, or one of: 'kvstore',"+
-			" 'persistent_kvstore', 'counter', 'e2e' or 'noop' for local testing.")
+			" 'persistent_kvstore' or 'noop' for local testing.")
 	cmd.Flags().String("abci", config.ABCI, "specify abci transport (socket | grpc)")
 
 	// rpc flags
@@ -63,13 +62,11 @@ func AddNodeFlags(cmd *cobra.Command) {
 		"p2p.laddr",
 		config.P2P.ListenAddress,
 		"node listen address. (0.0.0.0:0 means any interface, any port)")
-	cmd.Flags().String("p2p.external-address",
-		config.P2P.ExternalAddress, "ip:port address to advertise to peers for them to dial")
+	cmd.Flags().String("p2p.external-address", config.P2P.ExternalAddress, "ip:port address to advertise to peers for them to dial")
 	cmd.Flags().String("p2p.seeds", config.P2P.Seeds, "comma-delimited ID@host:port seed nodes")
 	cmd.Flags().String("p2p.persistent_peers", config.P2P.PersistentPeers, "comma-delimited ID@host:port persistent peers")
 	cmd.Flags().String("p2p.unconditional_peer_ids",
 		config.P2P.UnconditionalPeerIDs, "comma-delimited IDs of unconditional peers")
-	cmd.Flags().Bool("p2p.upnp", config.P2P.UPNP, "enable/disable UPNP port forwarding")
 	cmd.Flags().Bool("p2p.pex", config.P2P.PexReactor, "enable/disable Peer-Exchange")
 	cmd.Flags().Bool("p2p.seed_mode", config.P2P.SeedMode, "enable/disable seed mode")
 	cmd.Flags().String("p2p.private_peer_ids", config.P2P.PrivatePeerIDs, "comma-delimited private peer IDs")

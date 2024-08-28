@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	abci "github.com/tendermint/tendermint/abci/types"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	"github.com/tendermint/tendermint/rpc/client"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	"github.com/tendermint/tendermint/types"
+	abci "github.com/cometbft/cometbft/abci/types"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
+	"github.com/cometbft/cometbft/rpc/client"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	"github.com/cometbft/cometbft/types"
 )
 
 var waitForEventTimeout = 8 * time.Second
@@ -154,12 +154,6 @@ func testTxEventsSent(t *testing.T, broadcastMethod string) {
 			require.True(t, txe.Result.IsOK())
 		})
 	}
-}
-
-// Test HTTPClient resubscribes upon disconnect && subscription error.
-// Test Local client resubscribes upon subscription error.
-func TestClientsResubscribe(t *testing.T) {
-	// TODO(melekes)
 }
 
 func TestHTTPReturnsErrorIfClientIsNotRunning(t *testing.T) {

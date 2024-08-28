@@ -9,8 +9,8 @@ import (
 	"path"
 	"path/filepath"
 
-	cfg "github.com/tendermint/tendermint/config"
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
+	cfg "github.com/cometbft/cometbft/config"
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 )
 
 // dumpStatus gets node status state dump from the CometBFT RPC and writes it
@@ -79,5 +79,5 @@ func dumpProfile(dir, addr, profile string, debug int) error {
 		return fmt.Errorf("failed to read %s profile response body: %w", profile, err)
 	}
 
-	return os.WriteFile(path.Join(dir, fmt.Sprintf("%s.out", profile)), body, os.ModePerm)
+	return os.WriteFile(path.Join(dir, fmt.Sprintf("%s.out", profile)), body, 0o600)
 }

@@ -18,13 +18,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	cmtbytes "github.com/tendermint/tendermint/libs/bytes"
-	"github.com/tendermint/tendermint/libs/log"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
+	cmtbytes "github.com/cometbft/cometbft/libs/bytes"
+	"github.com/cometbft/cometbft/libs/log"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
 
-	client "github.com/tendermint/tendermint/rpc/jsonrpc/client"
-	server "github.com/tendermint/tendermint/rpc/jsonrpc/server"
-	types "github.com/tendermint/tendermint/rpc/jsonrpc/types"
+	client "github.com/cometbft/cometbft/rpc/jsonrpc/client"
+	server "github.com/cometbft/cometbft/rpc/jsonrpc/server"
+	types "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 )
 
 // Client and Server should work over tcp or unix sockets
@@ -71,27 +71,27 @@ var Routes = map[string]*server.RPCFunc{
 	"echo_default":    server.NewRPCFunc(EchoWithDefault, "arg", server.Cacheable("arg")),
 }
 
-func EchoResult(ctx *types.Context, v string) (*ResultEcho, error) {
+func EchoResult(_ *types.Context, v string) (*ResultEcho, error) {
 	return &ResultEcho{v}, nil
 }
 
-func EchoWSResult(ctx *types.Context, v string) (*ResultEcho, error) {
+func EchoWSResult(_ *types.Context, v string) (*ResultEcho, error) {
 	return &ResultEcho{v}, nil
 }
 
-func EchoIntResult(ctx *types.Context, v int) (*ResultEchoInt, error) {
+func EchoIntResult(_ *types.Context, v int) (*ResultEchoInt, error) {
 	return &ResultEchoInt{v}, nil
 }
 
-func EchoBytesResult(ctx *types.Context, v []byte) (*ResultEchoBytes, error) {
+func EchoBytesResult(_ *types.Context, v []byte) (*ResultEchoBytes, error) {
 	return &ResultEchoBytes{v}, nil
 }
 
-func EchoDataBytesResult(ctx *types.Context, v cmtbytes.HexBytes) (*ResultEchoDataBytes, error) {
+func EchoDataBytesResult(_ *types.Context, v cmtbytes.HexBytes) (*ResultEchoDataBytes, error) {
 	return &ResultEchoDataBytes{v}, nil
 }
 
-func EchoWithDefault(ctx *types.Context, v *int) (*ResultEchoWithDefault, error) {
+func EchoWithDefault(_ *types.Context, v *int) (*ResultEchoWithDefault, error) {
 	val := -1
 	if v != nil {
 		val = *v
@@ -138,7 +138,7 @@ func setup() {
 	wm.SetLogger(tcpLogger)
 	mux.HandleFunc(websocketEndpoint, wm.WebsocketHandler)
 	config := server.DefaultConfig()
-	listener1, err := server.Listen(tcpAddr, config)
+	listener1, err := server.Listen(tcpAddr, config.MaxOpenConnections)
 	if err != nil {
 		panic(err)
 	}
@@ -154,7 +154,7 @@ func setup() {
 	wm = server.NewWebsocketManager(Routes)
 	wm.SetLogger(unixLogger)
 	mux2.HandleFunc(websocketEndpoint, wm.WebsocketHandler)
-	listener2, err := server.Listen(unixAddr, config)
+	listener2, err := server.Listen(unixAddr, config.MaxOpenConnections)
 	if err != nil {
 		panic(err)
 	}

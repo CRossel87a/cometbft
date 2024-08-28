@@ -121,7 +121,7 @@ A proposal is signed and published by the designated proposer at each
 round. The proposer is chosen by a deterministic and non-choking round
 robin selection algorithm that selects proposers in proportion to their
 voting power (see
-[implementation](https://github.com/cometbft/cometbft/blob/v0.34.x/types/validator_set.go#L51)).
+[implementation](https://github.com/cometbft/cometbft/blob/af3bc47df982e271d4d340a3c5e0d773e440466d/types/validator_set.go#L51)).
 
 A proposal at `(H,R)` is composed of a block and an optional latest
 `PoLC-Round < R` which is included iff the proposer knows of one. This
@@ -293,7 +293,7 @@ may make JSet verification/gossip logic easier to implement.
 ### Censorship Attacks
 
 Due to the definition of a block
-[commit](https://github.com/cometbft/cometbft/blob/v0.34.x/docs/core/validators.md), any 1/3+ coalition of
+[commit](https://github.com/cometbft/cometbft/blob/v0.38.x/docs/core/validators.md), any 1/3+ coalition of
 validators can halt the blockchain by not broadcasting their votes. Such
 a coalition can also censor particular transactions by rejecting blocks
 that include these transactions, though this would result in a

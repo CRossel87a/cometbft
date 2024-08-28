@@ -5,7 +5,7 @@ import (
 	mrand "math/rand"
 	"time"
 
-	cmtsync "github.com/tendermint/tendermint/libs/sync"
+	cmtsync "github.com/cometbft/cometbft/libs/sync"
 )
 
 const (
@@ -48,7 +48,9 @@ func (r *Rand) init() {
 }
 
 func (r *Rand) reset(seed int64) {
-	r.rand = mrand.New(mrand.NewSource(seed)) //nolint:gosec,nolintlint // G404: Use of weak random number generator
+	// G404: Use of weak random number generator (math/rand instead of crypto/rand)
+	//nolint:gosec
+	r.rand = mrand.New(mrand.NewSource(seed))
 }
 
 //----------------------------------------
@@ -162,13 +164,12 @@ MAIN_LOOP:
 			if v >= 62 {         // only 62 characters in strChars
 				val >>= 6
 				continue
-			} else {
-				chars = append(chars, strChars[v])
-				if len(chars) == length {
-					break MAIN_LOOP
-				}
-				val >>= 6
 			}
+			chars = append(chars, strChars[v])
+			if len(chars) == length {
+				break MAIN_LOOP
+			}
+			val >>= 6
 		}
 	}
 
@@ -300,7 +301,7 @@ func (r *Rand) Perm(n int) []int {
 
 // NOTE: This relies on the os's random number generator.
 // For real security, we should salt that with some seed.
-// See github.com/tendermint/tendermint/crypto for a more secure reader.
+// See github.com/cometbft/cometbft/crypto for a more secure reader.
 func cRandBytes(numBytes int) []byte {
 	b := make([]byte, numBytes)
 	_, err := crand.Read(b)

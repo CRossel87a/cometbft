@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	abcimocks "github.com/tendermint/tendermint/abci/client/mocks"
-	"github.com/tendermint/tendermint/proxy/mocks"
+	abcimocks "github.com/cometbft/cometbft/abci/client/mocks"
+	"github.com/cometbft/cometbft/proxy/mocks"
 )
 
 func TestAppConns_Start_Stop(t *testing.T) {
@@ -28,7 +28,7 @@ func TestAppConns_Start_Stop(t *testing.T) {
 
 	clientCreatorMock.On("NewABCIClient").Return(clientMock, nil).Times(4)
 
-	appConns := NewAppConns(clientCreatorMock)
+	appConns := NewAppConns(clientCreatorMock, NopMetrics())
 
 	err := appConns.Start()
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestAppConns_Failure(t *testing.T) {
 
 	clientCreatorMock.On("NewABCIClient").Return(clientMock, nil)
 
-	appConns := NewAppConns(clientCreatorMock)
+	appConns := NewAppConns(clientCreatorMock, NopMetrics())
 
 	err := appConns.Start()
 	require.NoError(t, err)

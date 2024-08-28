@@ -37,11 +37,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
-	"github.com/gogo/protobuf/test"
+	"github.com/cosmos/gogoproto/proto"
+	"github.com/cosmos/gogoproto/test"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tendermint/tendermint/libs/protoio"
+	"github.com/cometbft/cometbft/libs/protoio"
 )
 
 func iotest(writer protoio.WriteCloser, reader protoio.ReadCloser) error {
@@ -97,10 +97,7 @@ func iotest(writer protoio.WriteCloser, reader protoio.ReadCloser) error {
 	if i != size {
 		panic("not enough messages read")
 	}
-	if err := reader.Close(); err != nil {
-		return err
-	}
-	return nil
+	return reader.Close()
 }
 
 type buffer struct {

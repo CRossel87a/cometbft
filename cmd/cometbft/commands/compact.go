@@ -10,12 +10,13 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 
-	"github.com/tendermint/tendermint/libs/log"
+	"github.com/cometbft/cometbft/libs/log"
 )
 
 var CompactGoLevelDBCmd = &cobra.Command{
-	Use:   "experimental-compact-goleveldb",
-	Short: "force compacts the CometBFT storage engine (only GoLevelDB supported)",
+	Use:     "experimental-compact-goleveldb",
+	Aliases: []string{"experimental_compact_goleveldb"},
+	Short:   "force compacts the CometBFT storage engine (only GoLevelDB supported)",
 	Long: `
 This is a temporary utility command that performs a force compaction on the state 
 and blockstores to reduce disk space for a pruning node. This should only be run 

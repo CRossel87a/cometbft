@@ -6,17 +6,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/cosmos/gogoproto/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tendermint/tendermint/crypto/merkle"
-	"github.com/tendermint/tendermint/libs/bits"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	"github.com/tendermint/tendermint/p2p"
-	cmtcons "github.com/tendermint/tendermint/proto/tendermint/consensus"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
-	"github.com/tendermint/tendermint/types"
+	"github.com/cometbft/cometbft/crypto/merkle"
+	"github.com/cometbft/cometbft/libs/bits"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
+	"github.com/cometbft/cometbft/p2p"
+	cmtcons "github.com/cometbft/cometbft/proto/tendermint/consensus"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	"github.com/cometbft/cometbft/types"
 )
 
 func TestMsgToProto(t *testing.T) {
@@ -57,21 +57,23 @@ func TestMsgToProto(t *testing.T) {
 	}
 	pbProposal := proposal.ToProto()
 
-	pv := types.NewMockPV()
-	pk, err := pv.GetPubKey()
-	require.NoError(t, err)
-	val := types.NewValidator(pk, 100)
-
-	vote, err := types.MakeVote(
-		1, types.BlockID{}, &types.ValidatorSet{Proposer: val, Validators: []*types.Validator{val}},
-		pv, "chainID", time.Now())
-	require.NoError(t, err)
+	vote := types.MakeVoteNoError(
+		t,
+		types.NewMockPV(),
+		"chainID",
+		0,
+		1,
+		0,
+		cmtproto.PrecommitType,
+		bi,
+		time.Now(),
+	)
 	pbVote := vote.ToProto()
 
 	testsCases := []struct {
 		testName string
 		msg      Message
-		want     *cmtcons.Message
+		want     proto.Message
 		wantErr  bool
 	}{
 		{"successful NewRoundStepMessage", &NewRoundStepMessage{
@@ -80,13 +82,13 @@ func TestMsgToProto(t *testing.T) {
 			Step:                  1,
 			SecondsSinceStartTime: 1,
 			LastCommitRound:       2,
-		}, (&cmtcons.NewRoundStep{
+		}, &cmtcons.NewRoundStep{
 			Height:                2,
 			Round:                 1,
 			Step:                  1,
 			SecondsSinceStartTime: 1,
 			LastCommitRound:       2,
-		}).Wrap().(*cmtcons.Message),
+		},
 
 			false},
 
@@ -96,48 +98,48 @@ func TestMsgToProto(t *testing.T) {
 			BlockPartSetHeader: psh,
 			BlockParts:         bits,
 			IsCommit:           false,
-		}, (&cmtcons.NewValidBlock{
+		}, &cmtcons.NewValidBlock{
 			Height:             1,
 			Round:              1,
 			BlockPartSetHeader: pbPsh,
 			BlockParts:         pbBits,
 			IsCommit:           false,
-		}).Wrap().(*cmtcons.Message),
+		},
 
 			false},
 		{"successful BlockPartMessage", &BlockPartMessage{
 			Height: 100,
 			Round:  1,
 			Part:   &parts,
-		}, (&cmtcons.BlockPart{
+		}, &cmtcons.BlockPart{
 			Height: 100,
 			Round:  1,
 			Part:   *pbParts,
-		}).Wrap().(*cmtcons.Message),
+		},
 
 			false},
 		{"successful ProposalPOLMessage", &ProposalPOLMessage{
 			Height:           1,
 			ProposalPOLRound: 1,
 			ProposalPOL:      bits,
-		}, (&cmtcons.ProposalPOL{
+		}, &cmtcons.ProposalPOL{
 			Height:           1,
 			ProposalPolRound: 1,
 			ProposalPol:      *pbBits,
-		}).Wrap().(*cmtcons.Message),
+		},
 			false},
 		{"successful ProposalMessage", &ProposalMessage{
 			Proposal: &proposal,
-		}, (&cmtcons.Proposal{
+		}, &cmtcons.Proposal{
 			Proposal: *pbProposal,
-		}).Wrap().(*cmtcons.Message),
+		},
 
 			false},
 		{"successful VoteMessage", &VoteMessage{
 			Vote: vote,
-		}, (&cmtcons.Vote{
+		}, &cmtcons.Vote{
 			Vote: pbVote,
-		}).Wrap().(*cmtcons.Message),
+		},
 
 			false},
 		{"successful VoteSetMaj23", &VoteSetMaj23Message{
@@ -145,12 +147,12 @@ func TestMsgToProto(t *testing.T) {
 			Round:   1,
 			Type:    1,
 			BlockID: bi,
-		}, (&cmtcons.VoteSetMaj23{
+		}, &cmtcons.VoteSetMaj23{
 			Height:  1,
 			Round:   1,
 			Type:    1,
 			BlockID: pbBi,
-		}).Wrap().(*cmtcons.Message),
+		},
 
 			false},
 		{"successful VoteSetBits", &VoteSetBitsMessage{
@@ -159,13 +161,13 @@ func TestMsgToProto(t *testing.T) {
 			Type:    1,
 			BlockID: bi,
 			Votes:   bits,
-		}, (&cmtcons.VoteSetBits{
+		}, &cmtcons.VoteSetBits{
 			Height:  1,
 			Round:   1,
 			Type:    1,
 			BlockID: pbBi,
 			Votes:   *pbBits,
-		}).Wrap().(*cmtcons.Message),
+		},
 
 			false},
 		{"failure", nil, &cmtcons.Message{}, true},
@@ -349,6 +351,8 @@ func TestConsMsgsVectors(t *testing.T) {
 		BlockID:          bi,
 	}
 	vpb := v.ToProto()
+	v.Extension = []byte("extension")
+	vextPb := v.ToProto()
 
 	testCases := []struct {
 		testName string
@@ -381,9 +385,12 @@ func TestConsMsgsVectors(t *testing.T) {
 		{"BlockPart", &cmtcons.Message{Sum: &cmtcons.Message_BlockPart{
 			BlockPart: &cmtcons.BlockPart{Height: 1, Round: 1, Part: *pbParts}}},
 			"2a36080110011a3008011204746573741a26080110011a206164645f6d6f72655f6578636c616d6174696f6e5f6d61726b735f636f64652d"},
-		{"Vote", &cmtcons.Message{Sum: &cmtcons.Message_Vote{
+		{"Vote_without_ext", &cmtcons.Message{Sum: &cmtcons.Message_Vote{
 			Vote: &cmtcons.Vote{Vote: vpb}}},
 			"32700a6e0802100122480a206164645f6d6f72655f6578636c616d6174696f6e5f6d61726b735f636f64652d1224080112206164645f6d6f72655f6578636c616d6174696f6e5f6d61726b735f636f64652d2a0608c0b89fdc0532146164645f6d6f72655f6578636c616d6174696f6e3801"},
+		{"Vote_with_ext", &cmtcons.Message{Sum: &cmtcons.Message_Vote{
+			Vote: &cmtcons.Vote{Vote: vextPb}}},
+			"327b0a790802100122480a206164645f6d6f72655f6578636c616d6174696f6e5f6d61726b735f636f64652d1224080112206164645f6d6f72655f6578636c616d6174696f6e5f6d61726b735f636f64652d2a0608c0b89fdc0532146164645f6d6f72655f6578636c616d6174696f6e38014a09657874656e73696f6e"},
 		{"HasVote", &cmtcons.Message{Sum: &cmtcons.Message_HasVote{
 			HasVote: &cmtcons.HasVote{Height: 1, Round: 1, Type: cmtproto.PrevoteType, Index: 1}}},
 			"3a080801100118012001"},

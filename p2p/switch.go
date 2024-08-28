@@ -6,12 +6,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
-	"github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/libs/cmap"
-	"github.com/tendermint/tendermint/libs/rand"
-	"github.com/tendermint/tendermint/libs/service"
-	"github.com/tendermint/tendermint/p2p/conn"
+	"github.com/cosmos/gogoproto/proto"
+
+	"github.com/cometbft/cometbft/config"
+	"github.com/cometbft/cometbft/libs/cmap"
+	"github.com/cometbft/cometbft/libs/rand"
+	"github.com/cometbft/cometbft/libs/service"
+	"github.com/cometbft/cometbft/p2p/conn"
 )
 
 const (
@@ -38,6 +39,8 @@ func MConnConfig(cfg *config.P2PConfig) conn.MConnConfig {
 	mConfig.SendRate = cfg.SendRate
 	mConfig.RecvRate = cfg.RecvRate
 	mConfig.MaxPacketMsgPayloadSize = cfg.MaxPacketMsgPayloadSize
+	mConfig.TestFuzz = cfg.TestFuzz
+	mConfig.TestFuzzConfig = cfg.TestFuzzConfig
 	return mConfig
 }
 
@@ -262,14 +265,13 @@ func (sw *Switch) OnStop() {
 //---------------------------------------------------------------------
 // Peers
 
-// BroadcastEnvelope runs a go routine for each attempted send, which will block trying
+// Broadcast runs a go routine for each attempted send, which will block trying
 // to send for defaultSendTimeoutSeconds. Returns a channel which receives
 // success values for each attempted send (false if times out). Channel will be
 // closed once msg bytes are sent to all peers (or time out).
-// BroadcastEnvelope sends to the peers using the SendEnvelope method.
 //
-// NOTE: BroadcastEnvelope uses goroutines, so order of broadcast may not be preserved.
-func (sw *Switch) BroadcastEnvelope(e Envelope) chan bool {
+// NOTE: Broadcast uses goroutines, so order of broadcast may not be preserved.
+func (sw *Switch) Broadcast(e Envelope) chan bool {
 	sw.Logger.Debug("Broadcast", "channel", e.ChannelID)
 
 	peers := sw.peers.List()
@@ -280,41 +282,7 @@ func (sw *Switch) BroadcastEnvelope(e Envelope) chan bool {
 	for _, peer := range peers {
 		go func(p Peer) {
 			defer wg.Done()
-			success := SendEnvelopeShim(p, e, sw.Logger)
-			successChan <- success
-		}(peer)
-	}
-
-	go func() {
-		wg.Wait()
-		close(successChan)
-	}()
-
-	return successChan
-}
-
-// Broadcast runs a go routine for each attempted send, which will block trying
-// to send for defaultSendTimeoutSeconds. Returns a channel which receives
-// success values for each attempted send (false if times out). Channel will be
-// closed once msg bytes are sent to all peers (or time out).
-// Broadcast sends to the peers using the Send method.
-//
-// NOTE: Broadcast uses goroutines, so order of broadcast may not be preserved.
-//
-// Deprecated: code looking to broadcast data to all peers should use BroadcastEnvelope.
-// Broadcast will be removed in 0.37.
-func (sw *Switch) Broadcast(chID byte, msgBytes []byte) chan bool {
-	sw.Logger.Debug("Broadcast", "channel", chID)
-
-	peers := sw.peers.List()
-	var wg sync.WaitGroup
-	wg.Add(len(peers))
-	successChan := make(chan bool, len(peers))
-
-	for _, peer := range peers {
-		go func(p Peer) {
-			defer wg.Done()
-			success := p.Send(chID, msgBytes)
+			success := p.Send(e)
 			successChan <- success
 		}(peer)
 	}

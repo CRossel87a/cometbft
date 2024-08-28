@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cometbft/cometbft/libs/log"
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	e2e "github.com/cometbft/cometbft/test/e2e/pkg"
+	"github.com/cometbft/cometbft/test/loadtime/payload"
+	"github.com/cometbft/cometbft/types"
 	"github.com/google/uuid"
-	"github.com/tendermint/tendermint/libs/log"
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
-	e2e "github.com/tendermint/tendermint/test/e2e/pkg"
-	"github.com/tendermint/tendermint/test/loadtime/payload"
-	"github.com/tendermint/tendermint/types"
 )
 
 const workerPoolSize = 16
@@ -50,6 +50,11 @@ func Load(ctx context.Context, testnet *e2e.Testnet) error {
 		select {
 		case <-chSuccess:
 			success++
+			if testnet.LoadMaxTxs > 0 && success >= testnet.LoadMaxTxs {
+				logger.Info("load", "msg", log.NewLazySprintf("Ending transaction load after reaching %v txs (%.1f tx/s)...",
+					success, float64(success)/time.Since(started).Seconds()))
+				return nil
+			}
 			timeout = stallTimeout
 		case <-time.After(timeout):
 			return fmt.Errorf("unable to submit transactions for %v", timeout)

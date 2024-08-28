@@ -2,32 +2,32 @@ package state_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
 	dbm "github.com/cometbft/cometbft-db"
 
-	abci "github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/crypto"
-	"github.com/tendermint/tendermint/crypto/ed25519"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	cmtstate "github.com/tendermint/tendermint/proto/tendermint/state"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
-	"github.com/tendermint/tendermint/proxy"
-	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
-	cmttime "github.com/tendermint/tendermint/types/time"
+	abci "github.com/cometbft/cometbft/abci/types"
+	"github.com/cometbft/cometbft/crypto"
+	"github.com/cometbft/cometbft/crypto/ed25519"
+	"github.com/cometbft/cometbft/internal/test"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	"github.com/cometbft/cometbft/proxy"
+	sm "github.com/cometbft/cometbft/state"
+	"github.com/cometbft/cometbft/types"
+	cmttime "github.com/cometbft/cometbft/types/time"
 )
 
 type paramsChangeTestCase struct {
 	height int64
-	params cmtproto.ConsensusParams
+	params types.ConsensusParams
 }
 
 func newTestApp() proxy.AppConns {
 	app := &testApp{}
 	cc := proxy.NewLocalClientCreator(app)
-	return proxy.NewAppConns(cc)
+	return proxy.NewAppConns(cc, proxy.NopMetrics())
 }
 
 func makeAndCommitGoodBlock(
@@ -37,7 +37,8 @@ func makeAndCommitGoodBlock(
 	proposerAddr []byte,
 	blockExec *sm.BlockExecutor,
 	privVals map[string]types.PrivValidator,
-	evidence []types.Evidence) (sm.State, types.BlockID, *types.Commit, error) {
+	evidence []types.Evidence,
+) (sm.State, types.BlockID, *types.ExtendedCommit, error) {
 	// A good block passes
 	state, blockID, err := makeAndApplyGoodBlock(state, height, lastCommit, proposerAddr, blockExec, evidence)
 	if err != nil {
@@ -45,7 +46,7 @@ func makeAndCommitGoodBlock(
 	}
 
 	// Simulate a lastCommit for this block from all validators for the next height
-	commit, err := makeValidCommit(height, blockID, state.Validators, privVals)
+	commit, _, err := makeValidCommit(height, blockID, state.Validators, privVals)
 	if err != nil {
 		return state, types.BlockID{}, nil, err
 	}
@@ -53,18 +54,36 @@ func makeAndCommitGoodBlock(
 }
 
 func makeAndApplyGoodBlock(state sm.State, height int64, lastCommit *types.Commit, proposerAddr []byte,
-	blockExec *sm.BlockExecutor, evidence []types.Evidence) (sm.State, types.BlockID, error) {
-	block, _ := state.MakeBlock(height, makeTxs(height), lastCommit, evidence, proposerAddr)
+	blockExec *sm.BlockExecutor, evidence []types.Evidence,
+) (sm.State, types.BlockID, error) {
+	block := state.MakeBlock(height, test.MakeNTxs(height, 10), lastCommit, evidence, proposerAddr)
+	partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
+	if err != nil {
+		return state, types.BlockID{}, err
+	}
+
 	if err := blockExec.ValidateBlock(state, block); err != nil {
 		return state, types.BlockID{}, err
 	}
-	blockID := types.BlockID{Hash: block.Hash(),
-		PartSetHeader: types.PartSetHeader{Total: 3, Hash: cmtrand.Bytes(32)}}
-	state, _, err := blockExec.ApplyBlock(state, blockID, block)
+	blockID := types.BlockID{
+		Hash:          block.Hash(),
+		PartSetHeader: partSet.Header(),
+	}
+	state, err = blockExec.ApplyBlock(state, blockID, block)
 	if err != nil {
 		return state, types.BlockID{}, err
 	}
 	return state, blockID, nil
+}
+
+func makeBlock(state sm.State, height int64, c *types.Commit) *types.Block {
+	return state.MakeBlock(
+		height,
+		test.MakeNTxs(state.LastBlockHeight, 10),
+		c,
+		nil,
+		state.Validators.GetProposer().Address,
+	)
 }
 
 func makeValidCommit(
@@ -72,25 +91,32 @@ func makeValidCommit(
 	blockID types.BlockID,
 	vals *types.ValidatorSet,
 	privVals map[string]types.PrivValidator,
-) (*types.Commit, error) {
-	sigs := make([]types.CommitSig, 0)
+) (*types.ExtendedCommit, []*types.Vote, error) {
+	sigs := make([]types.ExtendedCommitSig, vals.Size())
+	votes := make([]*types.Vote, vals.Size())
 	for i := 0; i < vals.Size(); i++ {
 		_, val := vals.GetByIndex(int32(i))
-		vote, err := types.MakeVote(height, blockID, vals, privVals[val.Address.String()], chainID, time.Now())
+		vote, err := types.MakeVote(
+			privVals[val.Address.String()],
+			chainID,
+			int32(i),
+			height,
+			0,
+			cmtproto.PrecommitType,
+			blockID,
+			time.Now(),
+		)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		sigs = append(sigs, vote.CommitSig())
+		sigs[i] = vote.ExtendedCommitSig()
+		votes[i] = vote
 	}
-	return types.NewCommit(height, 0, blockID, sigs), nil
-}
-
-// make some bogus txs
-func makeTxs(height int64) (txs []types.Tx) {
-	for i := 0; i < nTxsPerBlock; i++ {
-		txs = append(txs, types.Tx([]byte{byte(height), byte(i)}))
-	}
-	return txs
+	return &types.ExtendedCommit{
+		Height:             height,
+		BlockID:            blockID,
+		ExtendedSignatures: sigs,
+	}, votes, nil
 }
 
 func makeState(nVals, height int) (sm.State, dbm.DB, map[string]types.PrivValidator) {
@@ -133,17 +159,6 @@ func makeState(nVals, height int) (sm.State, dbm.DB, map[string]types.PrivValida
 	return s, stateDB, privVals
 }
 
-func makeBlock(state sm.State, height int64) *types.Block {
-	block, _ := state.MakeBlock(
-		height,
-		makeTxs(state.LastBlockHeight),
-		new(types.Commit),
-		nil,
-		state.Validators.GetProposer().Address,
-	)
-	return block
-}
-
 func genValSet(size int) *types.ValidatorSet {
 	vals := make([]*types.Validator, size)
 	for i := 0; i < size; i++ {
@@ -155,21 +170,15 @@ func genValSet(size int) *types.ValidatorSet {
 func makeHeaderPartsResponsesValPubKeyChange(
 	state sm.State,
 	pubkey crypto.PubKey,
-) (types.Header, types.BlockID, *cmtstate.ABCIResponses) {
-
-	block := makeBlock(state, state.LastBlockHeight+1)
-	abciResponses := &cmtstate.ABCIResponses{
-		BeginBlock: &abci.ResponseBeginBlock{},
-		EndBlock:   &abci.ResponseEndBlock{ValidatorUpdates: nil},
-	}
+) (types.Header, types.BlockID, *abci.ResponseFinalizeBlock) {
+	block := makeBlock(state, state.LastBlockHeight+1, new(types.Commit))
+	abciResponses := &abci.ResponseFinalizeBlock{}
 	// If the pubkey is new, remove the old and add the new.
 	_, val := state.NextValidators.GetByIndex(0)
 	if !bytes.Equal(pubkey.Bytes(), val.PubKey.Bytes()) {
-		abciResponses.EndBlock = &abci.ResponseEndBlock{
-			ValidatorUpdates: []abci.ValidatorUpdate{
-				types.TM2PB.NewValidatorUpdate(val.PubKey, 0),
-				types.TM2PB.NewValidatorUpdate(pubkey, 10),
-			},
+		abciResponses.ValidatorUpdates = []abci.ValidatorUpdate{
+			types.TM2PB.NewValidatorUpdate(val.PubKey, 0),
+			types.TM2PB.NewValidatorUpdate(pubkey, 10),
 		}
 	}
 
@@ -179,21 +188,15 @@ func makeHeaderPartsResponsesValPubKeyChange(
 func makeHeaderPartsResponsesValPowerChange(
 	state sm.State,
 	power int64,
-) (types.Header, types.BlockID, *cmtstate.ABCIResponses) {
-
-	block := makeBlock(state, state.LastBlockHeight+1)
-	abciResponses := &cmtstate.ABCIResponses{
-		BeginBlock: &abci.ResponseBeginBlock{},
-		EndBlock:   &abci.ResponseEndBlock{ValidatorUpdates: nil},
-	}
+) (types.Header, types.BlockID, *abci.ResponseFinalizeBlock) {
+	block := makeBlock(state, state.LastBlockHeight+1, new(types.Commit))
+	abciResponses := &abci.ResponseFinalizeBlock{}
 
 	// If the pubkey is new, remove the old and add the new.
 	_, val := state.NextValidators.GetByIndex(0)
 	if val.VotingPower != power {
-		abciResponses.EndBlock = &abci.ResponseEndBlock{
-			ValidatorUpdates: []abci.ValidatorUpdate{
-				types.TM2PB.NewValidatorUpdate(val.PubKey, power),
-			},
+		abciResponses.ValidatorUpdates = []abci.ValidatorUpdate{
+			types.TM2PB.NewValidatorUpdate(val.PubKey, power),
 		}
 	}
 
@@ -203,12 +206,10 @@ func makeHeaderPartsResponsesValPowerChange(
 func makeHeaderPartsResponsesParams(
 	state sm.State,
 	params cmtproto.ConsensusParams,
-) (types.Header, types.BlockID, *cmtstate.ABCIResponses) {
-
-	block := makeBlock(state, state.LastBlockHeight+1)
-	abciResponses := &cmtstate.ABCIResponses{
-		BeginBlock: &abci.ResponseBeginBlock{},
-		EndBlock:   &abci.ResponseEndBlock{ConsensusParamUpdates: types.TM2PB.ConsensusParams(&params)},
+) (types.Header, types.BlockID, *abci.ResponseFinalizeBlock) {
+	block := makeBlock(state, state.LastBlockHeight+1, new(types.Commit))
+	abciResponses := &abci.ResponseFinalizeBlock{
+		ConsensusParamUpdates: &params,
 	}
 	return block.Header, types.BlockID{Hash: block.Hash(), PartSetHeader: types.PartSetHeader{}}, abciResponses
 }
@@ -235,43 +236,69 @@ func randomGenesisDoc() *types.GenesisDoc {
 type testApp struct {
 	abci.BaseApplication
 
-	CommitVotes         []abci.VoteInfo
-	ByzantineValidators []abci.Evidence
-	ValidatorUpdates    []abci.ValidatorUpdate
+	CommitVotes      []abci.VoteInfo
+	Misbehavior      []abci.Misbehavior
+	LastTime         time.Time
+	ValidatorUpdates []abci.ValidatorUpdate
+	AppHash          []byte
 }
 
 var _ abci.Application = (*testApp)(nil)
 
-func (app *testApp) Info(req abci.RequestInfo) (resInfo abci.ResponseInfo) {
-	return abci.ResponseInfo{}
-}
+func (app *testApp) FinalizeBlock(_ context.Context, req *abci.RequestFinalizeBlock) (*abci.ResponseFinalizeBlock, error) {
+	app.CommitVotes = req.DecidedLastCommit.Votes
+	app.Misbehavior = req.Misbehavior
+	app.LastTime = req.Time
+	txResults := make([]*abci.ExecTxResult, len(req.Txs))
+	for idx := range req.Txs {
+		txResults[idx] = &abci.ExecTxResult{
+			Code: abci.CodeTypeOK,
+		}
+	}
 
-func (app *testApp) BeginBlock(req abci.RequestBeginBlock) abci.ResponseBeginBlock {
-	app.CommitVotes = req.LastCommitInfo.Votes
-	app.ByzantineValidators = req.ByzantineValidators
-	return abci.ResponseBeginBlock{}
-}
-
-func (app *testApp) EndBlock(req abci.RequestEndBlock) abci.ResponseEndBlock {
-	return abci.ResponseEndBlock{
+	return &abci.ResponseFinalizeBlock{
 		ValidatorUpdates: app.ValidatorUpdates,
-		ConsensusParamUpdates: &abci.ConsensusParams{
+		ConsensusParamUpdates: &cmtproto.ConsensusParams{
 			Version: &cmtproto.VersionParams{
-				AppVersion: 1}}}
+				App: 1,
+			},
+		},
+		TxResults: txResults,
+		AppHash:   app.AppHash,
+	}, nil
 }
 
-func (app *testApp) DeliverTx(req abci.RequestDeliverTx) abci.ResponseDeliverTx {
-	return abci.ResponseDeliverTx{Events: []abci.Event{}}
+func (app *testApp) Commit(_ context.Context, _ *abci.RequestCommit) (*abci.ResponseCommit, error) {
+	return &abci.ResponseCommit{RetainHeight: 1}, nil
 }
 
-func (app *testApp) CheckTx(req abci.RequestCheckTx) abci.ResponseCheckTx {
-	return abci.ResponseCheckTx{}
+func (app *testApp) PrepareProposal(
+	_ context.Context,
+	req *abci.RequestPrepareProposal,
+) (*abci.ResponsePrepareProposal, error) {
+	txs := make([][]byte, 0, len(req.Txs))
+	var totalBytes int64
+	for _, tx := range req.Txs {
+		if len(tx) == 0 {
+			continue
+		}
+		totalBytes += int64(len(tx))
+		if totalBytes > req.MaxTxBytes {
+			break
+		}
+		txs = append(txs, tx)
+	}
+	return &abci.ResponsePrepareProposal{Txs: txs}, nil
 }
 
-func (app *testApp) Commit() abci.ResponseCommit {
-	return abci.ResponseCommit{RetainHeight: 1}
-}
-
-func (app *testApp) Query(reqQuery abci.RequestQuery) (resQuery abci.ResponseQuery) {
-	return
+func (app *testApp) ProcessProposal(
+	_ context.Context,
+	req *abci.RequestProcessProposal,
+) (*abci.ResponseProcessProposal, error) {
+	for _, tx := range req.Txs {
+		if len(tx) == 0 {
+			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
+		}
+	}
+	return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_ACCEPT}, nil
 }

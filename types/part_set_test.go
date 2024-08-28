@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tendermint/tendermint/crypto/merkle"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
+	"github.com/cometbft/cometbft/crypto/merkle"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
 )
 
 const (
@@ -86,6 +86,22 @@ func TestWrongProof(t *testing.T) {
 	if added || err == nil {
 		t.Errorf("expected to fail adding a part with bad bytes.")
 	}
+
+	// Test adding a part with wrong proof index.
+	part = partSet.GetPart(2)
+	part.Proof.Index = 1
+	added, err = partSet2.AddPart(part)
+	if added || err == nil {
+		t.Errorf("expected to fail adding a part with bad proof index.")
+	}
+
+	// Test adding a part with wrong proof total.
+	part = partSet.GetPart(3)
+	part.Proof.Total = int64(partSet.Total() - 1)
+	added, err = partSet2.AddPart(part)
+	if added || err == nil {
+		t.Errorf("expected to fail adding a part with bad proof total.")
+	}
 }
 
 func TestPartSetHeaderValidateBasic(t *testing.T) {
@@ -117,9 +133,19 @@ func TestPartValidateBasic(t *testing.T) {
 	}{
 		{"Good Part", func(pt *Part) {}, false},
 		{"Too big part", func(pt *Part) { pt.Bytes = make([]byte, BlockPartSizeBytes+1) }, true},
+		{"Good small last part", func(pt *Part) {
+			pt.Index = 1
+			pt.Bytes = make([]byte, BlockPartSizeBytes-1)
+			pt.Proof.Total = 2
+		}, false},
+		{"Too small inner part", func(pt *Part) {
+			pt.Index = 0
+			pt.Bytes = make([]byte, BlockPartSizeBytes-1)
+			pt.Proof.Total = 2
+		}, true},
 		{"Too big proof", func(pt *Part) {
 			pt.Proof = merkle.Proof{
-				Total:    1,
+				Total:    2,
 				Index:    1,
 				LeafHash: make([]byte, 1024*1024),
 			}
@@ -145,10 +171,8 @@ func TestParSetHeaderProtoBuf(t *testing.T) {
 		expPass bool
 	}{
 		{"success empty", &PartSetHeader{}, true},
-		{
-			"success",
-			&PartSetHeader{Total: 1, Hash: []byte("hash")}, true,
-		},
+		{"success",
+			&PartSetHeader{Total: 1, Hash: []byte("hash")}, true},
 	}
 
 	for _, tc := range testCases {
@@ -164,6 +188,7 @@ func TestParSetHeaderProtoBuf(t *testing.T) {
 }
 
 func TestPartProtoBuf(t *testing.T) {
+
 	proof := merkle.Proof{
 		Total:    1,
 		Index:    1,
@@ -176,10 +201,8 @@ func TestPartProtoBuf(t *testing.T) {
 	}{
 		{"failure empty", &Part{}, false},
 		{"failure nil", nil, false},
-		{
-			"success",
-			&Part{Index: 1, Bytes: cmtrand.Bytes(32), Proof: proof}, true,
-		},
+		{"success",
+			&Part{Index: 1, Bytes: cmtrand.Bytes(32), Proof: proof}, true},
 	}
 
 	for _, tc := range testCases {

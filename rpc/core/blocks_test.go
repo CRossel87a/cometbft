@@ -9,12 +9,11 @@ import (
 
 	dbm "github.com/cometbft/cometbft-db"
 
-	abci "github.com/tendermint/tendermint/abci/types"
-	cmtstate "github.com/tendermint/tendermint/proto/tendermint/state"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
-	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
+	abci "github.com/cometbft/cometbft/abci/types"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
+	sm "github.com/cometbft/cometbft/state"
+	"github.com/cometbft/cometbft/state/mocks"
 )
 
 func TestBlockchainInfo(t *testing.T) {
@@ -25,7 +24,6 @@ func TestBlockchainInfo(t *testing.T) {
 		resultLength int64
 		wantErr      bool
 	}{
-
 		// min > max
 		{0, 0, 0, 0, 10, 0, true},  // min set to 1
 		{0, 1, 0, 0, 10, 0, true},  // max set to height (0)
@@ -70,23 +68,25 @@ func TestBlockchainInfo(t *testing.T) {
 }
 
 func TestBlockResults(t *testing.T) {
-	results := &cmtstate.ABCIResponses{
-		DeliverTxs: []*abci.ResponseDeliverTx{
+	results := &abci.ResponseFinalizeBlock{
+		TxResults: []*abci.ExecTxResult{
 			{Code: 0, Data: []byte{0x01}, Log: "ok"},
 			{Code: 0, Data: []byte{0x02}, Log: "ok"},
 			{Code: 1, Log: "not ok"},
 		},
-		EndBlock:   &abci.ResponseEndBlock{},
-		BeginBlock: &abci.ResponseBeginBlock{},
+		AppHash: make([]byte, 1),
 	}
 
-	env = &Environment{}
+	env := &Environment{}
 	env.StateStore = sm.NewStore(dbm.NewMemDB(), sm.StoreOptions{
 		DiscardABCIResponses: false,
 	})
-	err := env.StateStore.SaveABCIResponses(100, results)
+	err := env.StateStore.SaveFinalizeBlockResponse(100, results)
 	require.NoError(t, err)
-	env.BlockStore = mockBlockStore{height: 100}
+	mockstore := &mocks.BlockStore{}
+	mockstore.On("Height").Return(int64(100))
+	mockstore.On("Base").Return(int64(1))
+	env.BlockStore = mockstore
 
 	testCases := []struct {
 		height  int64
@@ -98,16 +98,16 @@ func TestBlockResults(t *testing.T) {
 		{101, true, nil},
 		{100, false, &ctypes.ResultBlockResults{
 			Height:                100,
-			TxsResults:            results.DeliverTxs,
-			BeginBlockEvents:      results.BeginBlock.Events,
-			EndBlockEvents:        results.EndBlock.Events,
-			ValidatorUpdates:      results.EndBlock.ValidatorUpdates,
-			ConsensusParamUpdates: results.EndBlock.ConsensusParamUpdates,
+			TxsResults:            results.TxResults,
+			FinalizeBlockEvents:   results.Events,
+			ValidatorUpdates:      results.ValidatorUpdates,
+			ConsensusParamUpdates: results.ConsensusParamUpdates,
+			AppHash:               make([]byte, 1),
 		}},
 	}
 
 	for _, tc := range testCases {
-		res, err := BlockResults(&rpctypes.Context{}, &tc.height)
+		res, err := env.BlockResults(&rpctypes.Context{}, &tc.height)
 		if tc.wantErr {
 			assert.Error(t, err)
 		} else {
@@ -115,22 +115,4 @@ func TestBlockResults(t *testing.T) {
 			assert.Equal(t, tc.wantRes, res)
 		}
 	}
-}
-
-type mockBlockStore struct {
-	height int64
-}
-
-func (mockBlockStore) Base() int64                                       { return 1 }
-func (store mockBlockStore) Height() int64                               { return store.height }
-func (store mockBlockStore) Size() int64                                 { return store.height }
-func (mockBlockStore) LoadBaseMeta() *types.BlockMeta                    { return nil }
-func (mockBlockStore) LoadBlockMeta(height int64) *types.BlockMeta       { return nil }
-func (mockBlockStore) LoadBlock(height int64) *types.Block               { return nil }
-func (mockBlockStore) LoadBlockByHash(hash []byte) *types.Block          { return nil }
-func (mockBlockStore) LoadBlockPart(height int64, index int) *types.Part { return nil }
-func (mockBlockStore) LoadBlockCommit(height int64) *types.Commit        { return nil }
-func (mockBlockStore) LoadSeenCommit(height int64) *types.Commit         { return nil }
-func (mockBlockStore) PruneBlocks(height int64) (uint64, error)          { return 0, nil }
-func (mockBlockStore) SaveBlock(block *types.Block, blockParts *types.PartSet, seenCommit *types.Commit) {
 }

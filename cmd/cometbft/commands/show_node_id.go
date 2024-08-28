@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tendermint/tendermint/p2p"
+	"github.com/cometbft/cometbft/p2p"
 )
 
 // ShowNodeIDCmd dumps node's ID to the standard output.
@@ -14,10 +14,9 @@ var ShowNodeIDCmd = &cobra.Command{
 	Aliases: []string{"show_node_id"},
 	Short:   "Show this node's ID",
 	RunE:    showNodeID,
-	PreRun:  deprecateSnakeCase,
 }
 
-func showNodeID(cmd *cobra.Command, args []string) error {
+func showNodeID(*cobra.Command, []string) error {
 	nodeKey, err := p2p.LoadNodeKey(config.NodeKeyFile())
 	if err != nil {
 		return err

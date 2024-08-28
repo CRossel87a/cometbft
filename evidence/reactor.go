@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
-	clist "github.com/tendermint/tendermint/libs/clist"
-	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/p2p"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
-	"github.com/tendermint/tendermint/types"
+	"github.com/cosmos/gogoproto/proto"
+
+	clist "github.com/cometbft/cometbft/libs/clist"
+	"github.com/cometbft/cometbft/libs/log"
+	"github.com/cometbft/cometbft/p2p"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	"github.com/cometbft/cometbft/types"
 )
 
 const (
@@ -68,7 +69,7 @@ func (evR *Reactor) AddPeer(peer p2p.Peer) {
 
 // Receive implements Reactor.
 // It adds any received evidence to the evpool.
-func (evR *Reactor) ReceiveEnvelope(e p2p.Envelope) {
+func (evR *Reactor) Receive(e p2p.Envelope) {
 	evis, err := evidenceListFromProto(e.Message)
 	if err != nil {
 		evR.Logger.Error("Error decoding message", "src", e.Src, "chId", e.ChannelID, "err", err)
@@ -90,19 +91,6 @@ func (evR *Reactor) ReceiveEnvelope(e p2p.Envelope) {
 			evR.Logger.Error("Evidence has not been added", "evidence", evis, "err", err)
 		}
 	}
-}
-
-func (evR *Reactor) Receive(chID byte, peer p2p.Peer, msgBytes []byte) {
-	msg := &cmtproto.EvidenceList{}
-	err := proto.Unmarshal(msgBytes, msg)
-	if err != nil {
-		panic(err)
-	}
-	evR.ReceiveEnvelope(p2p.Envelope{
-		ChannelID: chID,
-		Src:       peer,
-		Message:   msg,
-	})
 }
 
 // SetEventBus implements events.Eventable.
@@ -146,10 +134,10 @@ func (evR *Reactor) broadcastEvidenceRoutine(peer p2p.Peer) {
 				panic(err)
 			}
 
-			success := p2p.SendEnvelopeShim(peer, p2p.Envelope{ //nolint: staticcheck
+			success := peer.Send(p2p.Envelope{
 				ChannelID: EvidenceChannel,
 				Message:   evp,
-			}, evR.Logger)
+			})
 			if !success {
 				time.Sleep(peerRetryMessageIntervalMS * time.Millisecond)
 				continue

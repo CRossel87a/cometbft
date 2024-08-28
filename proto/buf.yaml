@@ -1,6 +1,7 @@
 version: v1
+name: buf.build/tendermint/tendermint
 deps:
-  - buf.build/gogo/protobuf
+  - buf.build/cosmos/gogo-proto
 breaking:
   use:
     - FILE

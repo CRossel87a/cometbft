@@ -14,18 +14,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	abci "github.com/tendermint/tendermint/abci/types"
-	cmtjson "github.com/tendermint/tendermint/libs/json"
-	"github.com/tendermint/tendermint/libs/log"
-	cmtmath "github.com/tendermint/tendermint/libs/math"
-	mempl "github.com/tendermint/tendermint/mempool"
-	"github.com/tendermint/tendermint/rpc/client"
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
-	rpclocal "github.com/tendermint/tendermint/rpc/client/local"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	rpcclient "github.com/tendermint/tendermint/rpc/jsonrpc/client"
-	rpctest "github.com/tendermint/tendermint/rpc/test"
-	"github.com/tendermint/tendermint/types"
+	abci "github.com/cometbft/cometbft/abci/types"
+	cmtjson "github.com/cometbft/cometbft/libs/json"
+	"github.com/cometbft/cometbft/libs/log"
+	cmtmath "github.com/cometbft/cometbft/libs/math"
+	mempl "github.com/cometbft/cometbft/mempool"
+	"github.com/cometbft/cometbft/rpc/client"
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	rpclocal "github.com/cometbft/cometbft/rpc/client/local"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	rpcclient "github.com/cometbft/cometbft/rpc/jsonrpc/client"
+	rpctest "github.com/cometbft/cometbft/rpc/test"
+	"github.com/cometbft/cometbft/types"
 )
 
 var (
@@ -252,7 +252,7 @@ func TestAppCalls(t *testing.T) {
 		k, v, tx := MakeTxKV()
 		bres, err := c.BroadcastTxCommit(context.Background(), tx)
 		require.NoError(err)
-		require.True(bres.DeliverTx.IsOK())
+		require.True(bres.TxResult.IsOK())
 		txh := bres.Height
 		apph := txh + 1 // this is where the tx will be applied to the state
 
@@ -284,6 +284,15 @@ func TestAppCalls(t *testing.T) {
 		blockByHash, err := c.BlockByHash(context.Background(), block.BlockID.Hash)
 		require.NoError(err)
 		require.Equal(block, blockByHash)
+
+		// check that the header matches the block hash
+		header, err := c.Header(context.Background(), &apph)
+		require.NoError(err)
+		require.Equal(block.Block.Header, *header.Header)
+
+		headerByHash, err := c.HeaderByHash(context.Background(), block.BlockID.Hash)
+		require.NoError(err)
+		require.Equal(header, headerByHash)
 
 		// now check the results
 		blockResults, err := c.BlockResults(context.Background(), &txh)
@@ -359,7 +368,7 @@ func TestBroadcastTxCommit(t *testing.T) {
 		bres, err := c.BroadcastTxCommit(context.Background(), tx)
 		require.Nil(err, "%d: %+v", i, err)
 		require.True(bres.CheckTx.IsOK())
-		require.True(bres.DeliverTx.IsOK())
+		require.True(bres.TxResult.IsOK())
 
 		require.Equal(0, mempool.Size())
 	}
@@ -368,9 +377,9 @@ func TestBroadcastTxCommit(t *testing.T) {
 func TestUnconfirmedTxs(t *testing.T) {
 	_, _, tx := MakeTxKV()
 
-	ch := make(chan *abci.Response, 1)
+	ch := make(chan *abci.ResponseCheckTx, 1)
 	mempool := node.Mempool()
-	err := mempool.CheckTx(tx, func(resp *abci.Response) { ch <- resp }, mempl.TxInfo{})
+	err := mempool.CheckTx(tx, func(resp *abci.ResponseCheckTx) { ch <- resp }, mempl.TxInfo{})
 	require.NoError(t, err)
 
 	// wait for tx to arrive in mempoool.
@@ -398,9 +407,9 @@ func TestUnconfirmedTxs(t *testing.T) {
 func TestNumUnconfirmedTxs(t *testing.T) {
 	_, _, tx := MakeTxKV()
 
-	ch := make(chan *abci.Response, 1)
+	ch := make(chan *abci.ResponseCheckTx, 1)
 	mempool := node.Mempool()
-	err := mempool.CheckTx(tx, func(resp *abci.Response) { ch <- resp }, mempl.TxInfo{})
+	err := mempool.CheckTx(tx, func(resp *abci.ResponseCheckTx) { ch <- resp }, mempl.TxInfo{})
 	require.NoError(t, err)
 
 	// wait for tx to arrive in mempoool.
@@ -520,11 +529,15 @@ func TestBlockSearch(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, client.WaitForHeight(c, 5, nil))
-	// This cannot test match_events as it calls the client BlockSearch function directly
-	// It is the RPC request handler that processes the match_event
-	result, err := c.BlockSearch(context.Background(), "begin_event.foo = 100 AND begin_event.bar = 300", nil, nil, "asc")
+	result, err := c.BlockSearch(context.Background(), "begin_event.foo = 100", nil, nil, "asc")
 	require.NoError(t, err)
 	blockCount := len(result.Blocks)
+	// if we generate block events within the test (by uncommenting
+	// the code in line main_test.go:L23) then we expect len(result.Blocks)
+	// to be at least 5
+	// require.GreaterOrEqual(t, blockCount, 5)
+
+	// otherwise it is 0
 	require.Equal(t, blockCount, 0)
 
 }

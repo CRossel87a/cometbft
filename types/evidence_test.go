@@ -8,12 +8,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tendermint/tendermint/crypto"
-	"github.com/tendermint/tendermint/crypto/tmhash"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
-	cmtversion "github.com/tendermint/tendermint/proto/tendermint/version"
-	"github.com/tendermint/tendermint/version"
+	"github.com/cometbft/cometbft/crypto"
+	"github.com/cometbft/cometbft/crypto/tmhash"
+	cmtjson "github.com/cometbft/cometbft/libs/json"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
+	"github.com/cometbft/cometbft/version"
 )
 
 var defaultVoteTime = time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -33,8 +34,8 @@ func randomDuplicateVoteEvidence(t *testing.T) *DuplicateVoteEvidence {
 	blockID2 := makeBlockID([]byte("blockhash2"), 1000, []byte("partshash"))
 	const chainID = "mychain"
 	return &DuplicateVoteEvidence{
-		VoteA:            makeVote(t, val, chainID, 0, 10, 2, 1, blockID, defaultVoteTime),
-		VoteB:            makeVote(t, val, chainID, 0, 10, 2, 1, blockID2, defaultVoteTime.Add(1*time.Minute)),
+		VoteA:            MakeVoteNoError(t, val, chainID, 0, 10, 2, 1, blockID, defaultVoteTime),
+		VoteB:            MakeVoteNoError(t, val, chainID, 0, 10, 2, 1, blockID2, defaultVoteTime.Add(1*time.Minute)),
 		TotalVotingPower: 30,
 		ValidatorPower:   10,
 		Timestamp:        defaultVoteTime,
@@ -43,7 +44,8 @@ func randomDuplicateVoteEvidence(t *testing.T) *DuplicateVoteEvidence {
 
 func TestDuplicateVoteEvidence(t *testing.T) {
 	const height = int64(13)
-	ev := NewMockDuplicateVoteEvidence(height, time.Now(), "mock-chain-id")
+	ev, err := NewMockDuplicateVoteEvidence(height, time.Now(), "mock-chain-id")
+	require.NoError(t, err)
 	assert.Equal(t, ev.Hash(), tmhash.Sum(ev.Bytes()))
 	assert.NotNil(t, ev.String())
 	assert.Equal(t, ev.Height(), height)
@@ -68,7 +70,7 @@ func TestDuplicateVoteEvidenceValidation(t *testing.T) {
 			ev.VoteB = nil
 		}, true},
 		{"Invalid vote type", func(ev *DuplicateVoteEvidence) {
-			ev.VoteA = makeVote(t, val, chainID, math.MaxInt32, math.MaxInt64, math.MaxInt32, 0, blockID2, defaultVoteTime)
+			ev.VoteA = MakeVoteNoError(t, val, chainID, math.MaxInt32, math.MaxInt64, math.MaxInt32, 0, blockID2, defaultVoteTime)
 		}, true},
 		{"Invalid vote order", func(ev *DuplicateVoteEvidence) {
 			swap := ev.VoteA.Copy()
@@ -79,10 +81,11 @@ func TestDuplicateVoteEvidenceValidation(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.testName, func(t *testing.T) {
-			vote1 := makeVote(t, val, chainID, math.MaxInt32, math.MaxInt64, math.MaxInt32, 0x02, blockID, defaultVoteTime)
-			vote2 := makeVote(t, val, chainID, math.MaxInt32, math.MaxInt64, math.MaxInt32, 0x02, blockID2, defaultVoteTime)
+			vote1 := MakeVoteNoError(t, val, chainID, math.MaxInt32, math.MaxInt64, math.MaxInt32, 0x02, blockID, defaultVoteTime)
+			vote2 := MakeVoteNoError(t, val, chainID, math.MaxInt32, math.MaxInt64, math.MaxInt32, 0x02, blockID2, defaultVoteTime)
 			valSet := NewValidatorSet([]*Validator{val.ExtractIntoValidator(10)})
-			ev := NewDuplicateVoteEvidence(vote1, vote2, defaultVoteTime, valSet)
+			ev, err := NewDuplicateVoteEvidence(vote1, vote2, defaultVoteTime, valSet)
+			require.NoError(t, err)
 			tc.malleateEvidence(ev)
 			assert.Equal(t, tc.expectErr, ev.ValidateBasic() != nil, "Validate Basic had an unexpected result")
 		})
@@ -93,12 +96,14 @@ func TestLightClientAttackEvidenceBasic(t *testing.T) {
 	height := int64(5)
 	commonHeight := height - 1
 	nValidators := 10
-	voteSet, valSet, privVals := randVoteSet(height, 1, cmtproto.PrecommitType, nValidators, 1)
+	voteSet, valSet, privVals := randVoteSet(height, 1, cmtproto.PrecommitType, nValidators, 1, false)
 	header := makeHeaderRandom()
 	header.Height = height
 	blockID := makeBlockID(tmhash.Sum([]byte("blockhash")), math.MaxInt32, tmhash.Sum([]byte("partshash")))
-	commit, err := MakeCommit(blockID, height, 1, voteSet, privVals, defaultVoteTime)
+	extCommit, err := MakeExtCommit(blockID, height, 1, voteSet, privVals, defaultVoteTime, false)
 	require.NoError(t, err)
+	commit := extCommit.ToCommit()
+
 	lcae := &LightClientAttackEvidence{
 		ConflictingBlock: &LightBlock{
 			SignedHeader: &SignedHeader{
@@ -152,13 +157,15 @@ func TestLightClientAttackEvidenceValidation(t *testing.T) {
 	height := int64(5)
 	commonHeight := height - 1
 	nValidators := 10
-	voteSet, valSet, privVals := randVoteSet(height, 1, cmtproto.PrecommitType, nValidators, 1)
+	voteSet, valSet, privVals := randVoteSet(height, 1, cmtproto.PrecommitType, nValidators, 1, false)
 	header := makeHeaderRandom()
 	header.Height = height
 	header.ValidatorsHash = valSet.Hash()
 	blockID := makeBlockID(header.Hash(), math.MaxInt32, tmhash.Sum([]byte("partshash")))
-	commit, err := MakeCommit(blockID, height, 1, voteSet, privVals, time.Now())
+	extCommit, err := MakeExtCommit(blockID, height, 1, voteSet, privVals, time.Now(), false)
 	require.NoError(t, err)
+	commit := extCommit.ToCommit()
+
 	lcae := &LightClientAttackEvidence{
 		ConflictingBlock: &LightBlock{
 			SignedHeader: &SignedHeader{
@@ -224,32 +231,9 @@ func TestLightClientAttackEvidenceValidation(t *testing.T) {
 }
 
 func TestMockEvidenceValidateBasic(t *testing.T) {
-	goodEvidence := NewMockDuplicateVoteEvidence(int64(1), time.Now(), "mock-chain-id")
-	assert.Nil(t, goodEvidence.ValidateBasic())
-}
-
-func makeVote(
-	t *testing.T, val PrivValidator, chainID string, valIndex int32, height int64, round int32, step int, blockID BlockID,
-	time time.Time) *Vote {
-	pubKey, err := val.GetPubKey()
+	goodEvidence, err := NewMockDuplicateVoteEvidence(int64(1), time.Now(), "mock-chain-id")
 	require.NoError(t, err)
-	v := &Vote{
-		ValidatorAddress: pubKey.Address(),
-		ValidatorIndex:   valIndex,
-		Height:           height,
-		Round:            round,
-		Type:             cmtproto.SignedMsgType(step),
-		BlockID:          blockID,
-		Timestamp:        time,
-	}
-
-	vpb := v.ToProto()
-	err = val.SignVote(chainID, vpb)
-	if err != nil {
-		panic(err)
-	}
-	v.Signature = vpb.Signature
-	return v
+	assert.Nil(t, goodEvidence.ValidateBasic())
 }
 
 func makeHeaderRandom() *Header {
@@ -277,8 +261,8 @@ func TestEvidenceProto(t *testing.T) {
 	blockID := makeBlockID(tmhash.Sum([]byte("blockhash")), math.MaxInt32, tmhash.Sum([]byte("partshash")))
 	blockID2 := makeBlockID(tmhash.Sum([]byte("blockhash2")), math.MaxInt32, tmhash.Sum([]byte("partshash")))
 	const chainID = "mychain"
-	v := makeVote(t, val, chainID, math.MaxInt32, math.MaxInt64, 1, 0x01, blockID, defaultVoteTime)
-	v2 := makeVote(t, val, chainID, math.MaxInt32, math.MaxInt64, 2, 0x01, blockID2, defaultVoteTime)
+	v := MakeVoteNoError(t, val, chainID, math.MaxInt32, math.MaxInt64, 1, 0x01, blockID, defaultVoteTime)
+	v2 := MakeVoteNoError(t, val, chainID, math.MaxInt32, math.MaxInt64, 2, 0x01, blockID2, defaultVoteTime)
 
 	// -------- SignedHeaders --------
 	const height int64 = 37
@@ -326,4 +310,24 @@ func TestEvidenceProto(t *testing.T) {
 			require.Equal(t, tt.evidence, evi, tt.testName)
 		})
 	}
+}
+
+// Test that the new JSON tags are picked up correctly, see issue #3528.
+func TestDuplicateVoteEvidenceJSON(t *testing.T) {
+	var evidence DuplicateVoteEvidence
+	js, err := cmtjson.Marshal(evidence)
+	require.NoError(t, err)
+
+	wantJSON := `{"type":"tendermint/DuplicateVoteEvidence","value":{"vote_a":null,"vote_b":null,"total_voting_power":"0","validator_power":"0","timestamp":"0001-01-01T00:00:00Z"}}`
+	assert.Equal(t, wantJSON, string(js))
+}
+
+// Test that the new JSON tags are picked up correctly, see issue #3528.
+func TestLightClientAttackEvidenceJSON(t *testing.T) {
+	var evidence LightClientAttackEvidence
+	js, err := cmtjson.Marshal(evidence)
+	require.NoError(t, err)
+
+	wantJSON := `{"type":"tendermint/LightClientAttackEvidence","value":{"conflicting_block":null,"common_height":"0","byzantine_validators":null,"total_voting_power":"0","timestamp":"0001-01-01T00:00:00Z"}}`
+	assert.Equal(t, wantJSON, string(js))
 }

@@ -10,22 +10,22 @@ By default, CometBFT uses the `syndtr/goleveldb` package for its in-process
 key-value database. If you want maximal performance, it may be best to install
 the real C-implementation of LevelDB and compile CometBFT to use that using
 `make build COMETBFT_BUILD_OPTIONS=cleveldb`. See the [install
-instructions](../introduction/install.md) for details.
+instructions](../guides/install.md) for details.
 
 CometBFT keeps multiple distinct databases in the `$CMTHOME/data`:
 
 - `blockstore.db`: Keeps the entire blockchain - stores blocks,
-  block commits, and block meta data, each indexed by height. Used to sync new
+  block commits, and block metadata, each indexed by height. Used to sync new
   peers.
-- `evidence.db`: Stores all verified evidence of misbehaviour.
-- `state.db`: Stores the current blockchain state (ie. height, validators,
+- `evidence.db`: Stores all verified evidence of misbehavior.
+- `state.db`: Stores the current blockchain state (i.e. height, validators,
   consensus params). Only grows if consensus params or validators change. Also
   used to temporarily store intermediate results during block processing.
-- `tx_index.db`: Indexes txs (and their results) by tx hash and by DeliverTx result events.
+- `tx_index.db`: Indexes transactions and by tx hash and height. The tx results are indexed if they are added to the `FinalizeBlock` response in the application.
 
-By default, CometBFT will only index txs by their hash and height, not by their DeliverTx
-result events. See [indexing transactions](../app-dev/indexing-transactions.md) for
-details.
+By default, CometBFT will only index transactions by their hash and height, if
+you want the result events to be indexed, see [indexing
+transactions](../app-dev/indexing-transactions.md) for for details.
 
 Applications can expose block pruning strategies to the node operator.
 Please read the documentation of your application to find out more details.
@@ -62,12 +62,12 @@ If your `consensus.wal` is corrupted, see [below](#wal-corruption).
 
 ### Mempool WAL
 
-The `mempool.wal` logs all incoming txs before running CheckTx, but is
+The `mempool.wal` logs all incoming transactions before running CheckTx, but is
 otherwise not used in any programmatic way. It's just a kind of manual
 safe guard. Note the mempool provides no durability guarantees - a tx sent to one or many nodes
 may never make it into the blockchain if those nodes crash before being able to
-propose it. Clients must monitor their txs by subscribing over websockets,
-polling for them, or using `/broadcast_tx_commit`. In the worst case, txs can be
+propose it. Clients must monitor their transactions by subscribing over websockets,
+polling for them, or using `/broadcast_tx_commit`. In the worst case, transactions can be
 resent from the mempool WAL manually.
 
 For the above reasons, the `mempool.wal` is disabled by default. To enable, set
@@ -93,15 +93,38 @@ mechanisms.
 
 ### RPC
 
-Endpoints returning multiple entries are limited by default to return 30
-elements (100 max). See the [RPC Documentation](https://docs.cometbft.com/v0.34/rpc/)
-for more information.
+#### Attack Exposure and Mitigation
 
-Rate-limiting and authentication are another key aspects to help protect
-against DOS attacks. Validators are supposed to use external tools like
-[NGINX](https://www.nginx.com/blog/rate-limiting-nginx/) or
-[traefik](https://docs.traefik.io/middlewares/ratelimit/)
-to achieve the same things.
+**It is generally not recommended for RPC endpoints to be exposed publicly, and
+especially so if the node in question is a validator**, as the CometBFT RPC does
+not currently provide advanced security features. Public exposure of RPC
+endpoints without appropriate protection can make the associated node vulnerable
+to a variety of attacks.
+
+It is entirely up to operators to ensure, if nodes' RPC endpoints have to be
+exposed publicly, that appropriate measures have been taken to mitigate against
+attacks. Some examples of mitigation measures include, but are not limited to:
+
+- Never publicly exposing the RPC endpoints of validators (i.e. if the RPC
+  endpoints absolutely have to be exposed, ensure you do so only on full nodes
+  and with appropriate protection)
+- Correct usage of rate-limiting, authentication and caching (e.g. as provided
+  by reverse proxies like [nginx](https://nginx.org/) and/or DDoS protection
+  services like [Cloudflare](https://www.cloudflare.com))
+- Only exposing the specific endpoints absolutely necessary for the relevant use
+  cases (configurable via nginx/Cloudflare/etc.)
+
+If no expertise is available to the operator to assist with securing nodes' RPC
+endpoints, it is strongly recommended to never expose those endpoints publicly.
+
+**Under no condition should any of the [unsafe RPC endpoints](../rpc/#/Unsafe)
+ever be exposed publicly.**
+
+#### Endpoints Returning Multiple Entries
+
+Endpoints returning multiple entries are limited by default to return 30
+elements (100 max). See the [RPC Documentation](https://docs.cometbft.com/v0.38/rpc/)
+for more information.
 
 ## Debugging CometBFT
 
@@ -218,8 +241,8 @@ Recovering from data corruption can be hard and time-consuming. Here are two app
     ./scripts/wal2json/wal2json "$CMTHOME/data/cs.wal/wal" > /tmp/corrupted_wal
     ```
 
-3)  Search for a "CORRUPTED MESSAGE" line.
-4)  By looking at the previous message and the message after the corrupted one
+3) Search for a "CORRUPTED MESSAGE" line.
+4) By looking at the previous message and the message after the corrupted one
    and looking at the logs, try to rebuild the message. If the consequent
    messages are marked as corrupted too (this may happen if length header
    got corrupted or some writes did not make it to the WAL ~ truncation),
@@ -230,7 +253,7 @@ Recovering from data corruption can be hard and time-consuming. Here are two app
     $EDITOR /tmp/corrupted_wal
     ```
 
-5)  After editing, convert this file back into binary form by running:
+5) After editing, convert this file back into binary form by running:
 
     ```sh
     ./scripts/json2wal/json2wal /tmp/corrupted_wal  $CMTHOME/data/cs.wal/wal
@@ -330,7 +353,7 @@ We want `skip_timeout_commit=false` when there is economics on the line
 because proposers should wait to hear for more votes. But if you don't
 care about that and want the fastest consensus, you can skip it. It will
 be kept false by default for public deployments (e.g. [Cosmos
-Hub](https://cosmos.network/intro/hub)) while for enterprise
+Hub](https://hub.cosmos.network/)) while for enterprise
 applications, setting it to true is not a problem.
 
 - `consensus.peer_gossip_sleep_duration`
@@ -347,7 +370,7 @@ proposing the next block).
 
 By default, CometBFT checks whenever a peer's address is routable before
 saving it to the address book. The address is considered as routable if the IP
-is [valid and within allowed ranges](https://github.com/cometbft/cometbft/blob/v0.34.x/p2p/netaddress.go#L258).
+is [valid and within allowed ranges](https://github.com/cometbft/cometbft/blob/v0.38.x/p2p/netaddress.go#L258).
 
 This may not be the case for private or local networks, where your IP range is usually
 strictly limited and private. If that case, you need to set `addr_book_strict`

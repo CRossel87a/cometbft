@@ -8,12 +8,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/tendermint/tendermint/crypto"
-	cmtbytes "github.com/tendermint/tendermint/libs/bytes"
-	cmtjson "github.com/tendermint/tendermint/libs/json"
-	cmtos "github.com/tendermint/tendermint/libs/os"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
-	cmttime "github.com/tendermint/tendermint/types/time"
+	"github.com/cometbft/cometbft/crypto"
+	cmtbytes "github.com/cometbft/cometbft/libs/bytes"
+	cmtjson "github.com/cometbft/cometbft/libs/json"
+	cmtos "github.com/cometbft/cometbft/libs/os"
+	cmttime "github.com/cometbft/cometbft/types/time"
 )
 
 const (
@@ -37,13 +36,13 @@ type GenesisValidator struct {
 
 // GenesisDoc defines the initial conditions for a CometBFT blockchain, in particular its validator set.
 type GenesisDoc struct {
-	GenesisTime     time.Time                 `json:"genesis_time"`
-	ChainID         string                    `json:"chain_id"`
-	InitialHeight   int64                     `json:"initial_height"`
-	ConsensusParams *cmtproto.ConsensusParams `json:"consensus_params,omitempty"`
-	Validators      []GenesisValidator        `json:"validators,omitempty"`
-	AppHash         cmtbytes.HexBytes         `json:"app_hash"`
-	AppState        json.RawMessage           `json:"app_state,omitempty"`
+	GenesisTime     time.Time          `json:"genesis_time"`
+	ChainID         string             `json:"chain_id"`
+	InitialHeight   int64              `json:"initial_height"`
+	ConsensusParams *ConsensusParams   `json:"consensus_params,omitempty"`
+	Validators      []GenesisValidator `json:"validators,omitempty"`
+	AppHash         cmtbytes.HexBytes  `json:"app_hash"`
+	AppState        json.RawMessage    `json:"app_state,omitempty"`
 }
 
 // SaveAs is a utility method for saving GenensisDoc as a JSON file.
@@ -52,7 +51,7 @@ func (genDoc *GenesisDoc) SaveAs(file string) error {
 	if err != nil {
 		return err
 	}
-	return cmtos.WriteFile(file, genDocBytes, 0o644)
+	return cmtos.WriteFile(file, genDocBytes, 0644)
 }
 
 // ValidatorHash returns the hash of the validator set contained in the GenesisDoc
@@ -83,7 +82,7 @@ func (genDoc *GenesisDoc) ValidateAndComplete() error {
 
 	if genDoc.ConsensusParams == nil {
 		genDoc.ConsensusParams = DefaultConsensusParams()
-	} else if err := ValidateConsensusParams(*genDoc.ConsensusParams); err != nil {
+	} else if err := genDoc.ConsensusParams.ValidateBasic(); err != nil {
 		return err
 	}
 

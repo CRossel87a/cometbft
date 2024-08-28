@@ -27,11 +27,8 @@ func TestSetupEnv(t *testing.T) {
 		{nil, map[string]string{"DEMO_FOOBAR": "good"}, "good"},
 		{nil, map[string]string{"DEMOFOOBAR": "silly"}, "silly"},
 		// and that cli overrides env...
-		{
-			[]string{"--foobar", "important"},
-			map[string]string{"DEMO_FOOBAR": "ignored"},
-			"important",
-		},
+		{[]string{"--foobar", "important"},
+			map[string]string{"DEMO_FOOBAR": "ignored"}, "important"},
 	}
 
 	for idx, tc := range cases {

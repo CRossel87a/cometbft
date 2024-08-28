@@ -24,16 +24,13 @@ I[10-04|13:54:27.368] ABCI Replay Blocks                           module=consen
 I[10-04|13:54:27.368] Completed ABCI Handshake - CometBFT and App are synced module=consensus appHeight=90 appHash=E0FBAFBF6FCED8B9786DDFEB1A0D4FA2501BADAD
 ```
 
-After that, we start a few more things like the event switch, reactors,
-and perform UPNP discover in order to detect the IP address.
+After that, we start a few more things like the event switch and reactors.
 
 ```sh
 I[10-04|13:54:27.374] Starting EventSwitch                         module=types impl=EventSwitch
 I[10-04|13:54:27.375] This node is a validator                     module=consensus
 I[10-04|13:54:27.379] Starting Node                                module=main impl=Node
 I[10-04|13:54:27.381] Local listener                               module=p2p ip=:: port=26656
-I[10-04|13:54:27.382] Getting UPNP external address                module=p2p
-I[10-04|13:54:30.386] Could not perform UPNP discover              module=p2p err="write udp4 0.0.0.0:38238->239.255.255.250:1900: i/o timeout"
 I[10-04|13:54:30.386] Starting DefaultListener                     module=p2p impl=Listener(@10.0.2.15:26656)
 I[10-04|13:54:30.387] Starting P2P Switch                          module=p2p impl="P2P Switch"
 I[10-04|13:54:30.387] Starting MempoolReactor                      module=mempool impl=MempoolReactor
@@ -66,7 +63,7 @@ I[10-04|13:54:30.392] Started node                                 module=main n
 Next follows a standard block creation cycle, where we enter a new
 round, propose a block, receive more than 2/3 of prevotes, then
 precommits and finally have a chance to commit a block. For details,
-please refer to [Byzantine Consensus Algorithm](https://github.com/cometbft/cometbft/blob/v0.34.x/spec/consensus/consensus.md).
+please refer to [Byzantine Consensus Algorithm](https://github.com/cometbft/cometbft/blob/v0.38.x/spec/consensus/consensus.md).
 
 ```sh
 I[10-04|13:54:30.393] enterNewRound(91/0). Current: 91/0/RoundStepNewHeight module=consensus
@@ -117,7 +114,7 @@ little overview what they do.
 - `abci-client` As mentioned in [Application Development Guide](../app-dev/abci-cli.md), CometBFT acts as an ABCI
   client with respect to the application and maintains 3 connections:
   mempool, consensus and query. The code used by CometBFT can
-  be found [here](https://github.com/cometbft/cometbft/blob/v0.34.x/abci/client).
+  be found [here](https://github.com/cometbft/cometbft/blob/v0.38.x/abci/client).
 - `blockchain` Provides storage, pool (a group of peers), and reactor
   for both storing and exchanging blocks between peers.
 - `consensus` The heart of CometBFT, which is the
@@ -127,17 +124,17 @@ little overview what they do.
   from a crash.
 - `events` Simple event notification system. The list of events can be
   found
-  [here](https://github.com/cometbft/cometbft/blob/v0.34.x/types/events.go).
+  [here](https://github.com/cometbft/cometbft/blob/v0.38.x/types/events.go).
   You can subscribe to them by calling `subscribe` RPC method. Refer
   to [RPC docs](./rpc.md) for additional information.
 - `mempool` Mempool module handles all incoming transactions, whenever
   they are coming from peers or the application.
 - `p2p` Provides an abstraction around peer-to-peer communication. For
   more details, please check out the
-  [README](https://github.com/cometbft/cometbft/blob/v0.34.x/p2p/README.md).
+  [README](https://github.com/cometbft/cometbft/blob/v0.38.x/p2p/README.md).
 - `rpc` [CometBFT's RPC](./rpc.md).
 - `rpc-server` RPC server. For implementation details, please read the
-  [doc.go](https://github.com/cometbft/cometbft/blob/v0.34.x/rpc/jsonrpc/doc.go).
+  [doc.go](https://github.com/cometbft/cometbft/blob/v0.38.x/rpc/jsonrpc/doc.go).
 - `state` Represents the latest state and execution submodule, which
   executes blocks against the application.
 - `types` A collection of the publicly exposed types and methods to

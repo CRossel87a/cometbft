@@ -1,70 +1,29 @@
 package types
 
 import (
-	"bufio"
-	"encoding/binary"
 	"io"
+	"math"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/cosmos/gogoproto/proto"
+
+	"github.com/cometbft/cometbft/libs/protoio"
 )
 
 const (
-	maxMsgSize = 104857600 // 100MB
+	maxMsgSize = math.MaxInt32 // 2GB
 )
 
 // WriteMessage writes a varint length-delimited protobuf message.
 func WriteMessage(msg proto.Message, w io.Writer) error {
-	bz, err := proto.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	return encodeByteSlice(w, bz)
+	protoWriter := protoio.NewDelimitedWriter(w)
+	_, err := protoWriter.WriteMsg(msg)
+	return err
 }
 
 // ReadMessage reads a varint length-delimited protobuf message.
 func ReadMessage(r io.Reader, msg proto.Message) error {
-	return readProtoMsg(r, msg, maxMsgSize)
-}
-
-func readProtoMsg(r io.Reader, msg proto.Message, maxSize int) error {
-	// binary.ReadVarint takes an io.ByteReader, eg. a bufio.Reader
-	reader, ok := r.(*bufio.Reader)
-	if !ok {
-		reader = bufio.NewReader(r)
-	}
-	length64, err := binary.ReadVarint(reader)
-	if err != nil {
-		return err
-	}
-	length := int(length64)
-	if length < 0 || length > maxSize {
-		return io.ErrShortBuffer
-	}
-	buf := make([]byte, length)
-	if _, err := io.ReadFull(reader, buf); err != nil {
-		return err
-	}
-	return proto.Unmarshal(buf, msg)
-}
-
-//-----------------------------------------------------------------------
-// NOTE: we copied wire.EncodeByteSlice from go-wire rather than keep
-// go-wire as a dep
-
-func encodeByteSlice(w io.Writer, bz []byte) (err error) {
-	err = encodeVarint(w, int64(len(bz)))
-	if err != nil {
-		return
-	}
-	_, err = w.Write(bz)
-	return
-}
-
-func encodeVarint(w io.Writer, i int64) (err error) {
-	var buf [10]byte
-	n := binary.PutVarint(buf[:], i)
-	_, err = w.Write(buf[0:n])
-	return
+	_, err := protoio.NewDelimitedReader(r, maxMsgSize).ReadMsg(msg)
+	return err
 }
 
 //----------------------------------------
@@ -81,27 +40,15 @@ func ToRequestFlush() *Request {
 	}
 }
 
-func ToRequestInfo(req RequestInfo) *Request {
+func ToRequestInfo(req *RequestInfo) *Request {
 	return &Request{
-		Value: &Request_Info{&req},
+		Value: &Request_Info{req},
 	}
 }
 
-func ToRequestSetOption(req RequestSetOption) *Request {
+func ToRequestCheckTx(req *RequestCheckTx) *Request {
 	return &Request{
-		Value: &Request_SetOption{&req},
-	}
-}
-
-func ToRequestDeliverTx(req RequestDeliverTx) *Request {
-	return &Request{
-		Value: &Request_DeliverTx{&req},
-	}
-}
-
-func ToRequestCheckTx(req RequestCheckTx) *Request {
-	return &Request{
-		Value: &Request_CheckTx{&req},
+		Value: &Request_CheckTx{req},
 	}
 }
 
@@ -111,51 +58,69 @@ func ToRequestCommit() *Request {
 	}
 }
 
-func ToRequestQuery(req RequestQuery) *Request {
+func ToRequestQuery(req *RequestQuery) *Request {
 	return &Request{
-		Value: &Request_Query{&req},
+		Value: &Request_Query{req},
 	}
 }
 
-func ToRequestInitChain(req RequestInitChain) *Request {
+func ToRequestInitChain(req *RequestInitChain) *Request {
 	return &Request{
-		Value: &Request_InitChain{&req},
+		Value: &Request_InitChain{req},
 	}
 }
 
-func ToRequestBeginBlock(req RequestBeginBlock) *Request {
+func ToRequestListSnapshots(req *RequestListSnapshots) *Request {
 	return &Request{
-		Value: &Request_BeginBlock{&req},
+		Value: &Request_ListSnapshots{req},
 	}
 }
 
-func ToRequestEndBlock(req RequestEndBlock) *Request {
+func ToRequestOfferSnapshot(req *RequestOfferSnapshot) *Request {
 	return &Request{
-		Value: &Request_EndBlock{&req},
+		Value: &Request_OfferSnapshot{req},
 	}
 }
 
-func ToRequestListSnapshots(req RequestListSnapshots) *Request {
+func ToRequestLoadSnapshotChunk(req *RequestLoadSnapshotChunk) *Request {
 	return &Request{
-		Value: &Request_ListSnapshots{&req},
+		Value: &Request_LoadSnapshotChunk{req},
 	}
 }
 
-func ToRequestOfferSnapshot(req RequestOfferSnapshot) *Request {
+func ToRequestApplySnapshotChunk(req *RequestApplySnapshotChunk) *Request {
 	return &Request{
-		Value: &Request_OfferSnapshot{&req},
+		Value: &Request_ApplySnapshotChunk{req},
 	}
 }
 
-func ToRequestLoadSnapshotChunk(req RequestLoadSnapshotChunk) *Request {
+func ToRequestPrepareProposal(req *RequestPrepareProposal) *Request {
 	return &Request{
-		Value: &Request_LoadSnapshotChunk{&req},
+		Value: &Request_PrepareProposal{req},
 	}
 }
 
-func ToRequestApplySnapshotChunk(req RequestApplySnapshotChunk) *Request {
+func ToRequestProcessProposal(req *RequestProcessProposal) *Request {
 	return &Request{
-		Value: &Request_ApplySnapshotChunk{&req},
+		Value: &Request_ProcessProposal{req},
+	}
+}
+
+func ToRequestExtendVote(req *RequestExtendVote) *Request {
+	return &Request{
+		Value: &Request_ExtendVote{req},
+	}
+}
+
+func ToRequestVerifyVoteExtension(req *RequestVerifyVoteExtension) *Request {
+	return &Request{
+		Value: &Request_VerifyVoteExtension{req},
+	}
+}
+
+func ToRequestFinalizeBlock(req *RequestFinalizeBlock) *Request {
+	return &Request{
+		Value: &Request_FinalizeBlock{req},
 	}
 }
 
@@ -179,80 +144,86 @@ func ToResponseFlush() *Response {
 	}
 }
 
-func ToResponseInfo(res ResponseInfo) *Response {
+func ToResponseInfo(res *ResponseInfo) *Response {
 	return &Response{
-		Value: &Response_Info{&res},
+		Value: &Response_Info{res},
 	}
 }
 
-func ToResponseSetOption(res ResponseSetOption) *Response {
+func ToResponseCheckTx(res *ResponseCheckTx) *Response {
 	return &Response{
-		Value: &Response_SetOption{&res},
+		Value: &Response_CheckTx{res},
 	}
 }
 
-func ToResponseDeliverTx(res ResponseDeliverTx) *Response {
+func ToResponseCommit(res *ResponseCommit) *Response {
 	return &Response{
-		Value: &Response_DeliverTx{&res},
+		Value: &Response_Commit{res},
 	}
 }
 
-func ToResponseCheckTx(res ResponseCheckTx) *Response {
+func ToResponseQuery(res *ResponseQuery) *Response {
 	return &Response{
-		Value: &Response_CheckTx{&res},
+		Value: &Response_Query{res},
 	}
 }
 
-func ToResponseCommit(res ResponseCommit) *Response {
+func ToResponseInitChain(res *ResponseInitChain) *Response {
 	return &Response{
-		Value: &Response_Commit{&res},
+		Value: &Response_InitChain{res},
 	}
 }
 
-func ToResponseQuery(res ResponseQuery) *Response {
+func ToResponseListSnapshots(res *ResponseListSnapshots) *Response {
 	return &Response{
-		Value: &Response_Query{&res},
+		Value: &Response_ListSnapshots{res},
 	}
 }
 
-func ToResponseInitChain(res ResponseInitChain) *Response {
+func ToResponseOfferSnapshot(res *ResponseOfferSnapshot) *Response {
 	return &Response{
-		Value: &Response_InitChain{&res},
+		Value: &Response_OfferSnapshot{res},
 	}
 }
 
-func ToResponseBeginBlock(res ResponseBeginBlock) *Response {
+func ToResponseLoadSnapshotChunk(res *ResponseLoadSnapshotChunk) *Response {
 	return &Response{
-		Value: &Response_BeginBlock{&res},
+		Value: &Response_LoadSnapshotChunk{res},
 	}
 }
 
-func ToResponseEndBlock(res ResponseEndBlock) *Response {
+func ToResponseApplySnapshotChunk(res *ResponseApplySnapshotChunk) *Response {
 	return &Response{
-		Value: &Response_EndBlock{&res},
+		Value: &Response_ApplySnapshotChunk{res},
 	}
 }
 
-func ToResponseListSnapshots(res ResponseListSnapshots) *Response {
+func ToResponsePrepareProposal(res *ResponsePrepareProposal) *Response {
 	return &Response{
-		Value: &Response_ListSnapshots{&res},
+		Value: &Response_PrepareProposal{res},
 	}
 }
 
-func ToResponseOfferSnapshot(res ResponseOfferSnapshot) *Response {
+func ToResponseProcessProposal(res *ResponseProcessProposal) *Response {
 	return &Response{
-		Value: &Response_OfferSnapshot{&res},
+		Value: &Response_ProcessProposal{res},
 	}
 }
 
-func ToResponseLoadSnapshotChunk(res ResponseLoadSnapshotChunk) *Response {
+func ToResponseExtendVote(res *ResponseExtendVote) *Response {
 	return &Response{
-		Value: &Response_LoadSnapshotChunk{&res},
+		Value: &Response_ExtendVote{res},
 	}
 }
 
-func ToResponseApplySnapshotChunk(res ResponseApplySnapshotChunk) *Response {
+func ToResponseVerifyVoteExtension(res *ResponseVerifyVoteExtension) *Response {
 	return &Response{
-		Value: &Response_ApplySnapshotChunk{&res},
+		Value: &Response_VerifyVoteExtension{res},
+	}
+}
+
+func ToResponseFinalizeBlock(res *ResponseFinalizeBlock) *Response {
+	return &Response{
+		Value: &Response_FinalizeBlock{res},
 	}
 }

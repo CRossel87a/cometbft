@@ -3,7 +3,7 @@ package commands
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/tendermint/tendermint/consensus"
+	"github.com/cometbft/cometbft/consensus"
 )
 
 // ReplayCmd allows replaying of messages from the WAL.
@@ -24,5 +24,4 @@ var ReplayConsoleCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		consensus.RunReplayFile(config.BaseConfig, config.Consensus, true)
 	},
-	PreRun: deprecateSnakeCase,
 }

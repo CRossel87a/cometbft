@@ -3,10 +3,10 @@ package mock
 import (
 	"net"
 
-	"github.com/tendermint/tendermint/crypto/ed25519"
-	"github.com/tendermint/tendermint/libs/service"
-	"github.com/tendermint/tendermint/p2p"
-	"github.com/tendermint/tendermint/p2p/conn"
+	"github.com/cometbft/cometbft/crypto/ed25519"
+	"github.com/cometbft/cometbft/libs/service"
+	"github.com/cometbft/cometbft/p2p"
+	"github.com/cometbft/cometbft/p2p/conn"
 )
 
 type Peer struct {
@@ -42,11 +42,9 @@ func NewPeer(ip net.IP) *Peer {
 	return mp
 }
 
-func (mp *Peer) FlushStop()                          { mp.Stop() } //nolint:errcheck //ignore error
-func (mp *Peer) TrySendEnvelope(e p2p.Envelope) bool { return true }
-func (mp *Peer) SendEnvelope(e p2p.Envelope) bool    { return true }
-func (mp *Peer) TrySend(_ byte, _ []byte) bool       { return true }
-func (mp *Peer) Send(_ byte, _ []byte) bool          { return true }
+func (mp *Peer) FlushStop()                  { mp.Stop() } //nolint:errcheck //ignore error
+func (mp *Peer) TrySend(_ p2p.Envelope) bool { return true }
+func (mp *Peer) Send(_ p2p.Envelope) bool    { return true }
 func (mp *Peer) NodeInfo() p2p.NodeInfo {
 	return p2p.DefaultNodeInfo{
 		DefaultNodeID: mp.addr.ID,
@@ -63,6 +61,7 @@ func (mp *Peer) Get(key string) interface{} {
 	}
 	return nil
 }
+
 func (mp *Peer) Set(key string, value interface{}) {
 	mp.kv[key] = value
 }

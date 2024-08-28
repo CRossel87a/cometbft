@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 )
 
 // LightBlock is a SignedHeader and a ValidatorSet.
@@ -118,6 +118,11 @@ type SignedHeader struct {
 	*Header `json:"header"`
 
 	Commit *Commit `json:"commit"`
+}
+
+// IsEmpty returns true if both the header and commit are nil.
+func (sh SignedHeader) IsEmpty() bool {
+	return sh.Header == nil && sh.Commit == nil
 }
 
 // ValidateBasic does basic consistency checks and makes sure the header

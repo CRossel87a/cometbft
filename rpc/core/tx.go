@@ -5,19 +5,19 @@ import (
 	"fmt"
 	"sort"
 
-	cmtmath "github.com/tendermint/tendermint/libs/math"
-	cmtquery "github.com/tendermint/tendermint/libs/pubsub/query"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
-	"github.com/tendermint/tendermint/state/txindex/null"
-	"github.com/tendermint/tendermint/types"
+	cmtmath "github.com/cometbft/cometbft/libs/math"
+	cmtquery "github.com/cometbft/cometbft/libs/pubsub/query"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
+	"github.com/cometbft/cometbft/state/txindex/null"
+	"github.com/cometbft/cometbft/types"
 )
 
 // Tx allows you to query the transaction results. `nil` could mean the
 // transaction is in the mempool, invalidated, or was not sent in the first
 // place.
-// More: https://docs.cometbft.com/v0.34/rpc/#/Info/tx
-func Tx(ctx *rpctypes.Context, hash []byte, prove bool) (*ctypes.ResultTx, error) {
+// More: https://docs.cometbft.com/v0.38.x/rpc/#/Info/tx
+func (env *Environment) Tx(_ *rpctypes.Context, hash []byte, prove bool) (*ctypes.ResultTx, error) {
 	// if index is disabled, return error
 	if _, ok := env.TxIndexer.(*null.TxIndex); ok {
 		return nil, fmt.Errorf("transaction indexing is disabled")
@@ -32,19 +32,18 @@ func Tx(ctx *rpctypes.Context, hash []byte, prove bool) (*ctypes.ResultTx, error
 		return nil, fmt.Errorf("tx (%X) not found", hash)
 	}
 
-	height := r.Height
-	index := r.Index
-
 	var proof types.TxProof
 	if prove {
-		block := env.BlockStore.LoadBlock(height)
-		proof = block.Data.Txs.Proof(int(index)) // XXX: overflow on 32-bit machines
+		block := env.BlockStore.LoadBlock(r.Height)
+		if block != nil {
+			proof = block.Data.Txs.Proof(int(r.Index))
+		}
 	}
 
 	return &ctypes.ResultTx{
 		Hash:     hash,
-		Height:   height,
-		Index:    index,
+		Height:   r.Height,
+		Index:    r.Index,
 		TxResult: r.Result,
 		Tx:       r.Tx,
 		Proof:    proof,
@@ -53,15 +52,14 @@ func Tx(ctx *rpctypes.Context, hash []byte, prove bool) (*ctypes.ResultTx, error
 
 // TxSearch allows you to query for multiple transactions results. It returns a
 // list of transactions (maximum ?per_page entries) and the total count.
-// More: https://docs.cometbft.com/v0.34/rpc/#/Info/tx_search
-func TxSearch(
+// More: https://docs.cometbft.com/v0.38.x/rpc/#/Info/tx_search
+func (env *Environment) TxSearch(
 	ctx *rpctypes.Context,
 	query string,
 	prove bool,
 	pagePtr, perPagePtr *int,
 	orderBy string,
 ) (*ctypes.ResultTxSearch, error) {
-
 	// if index is disabled, return error
 	if _, ok := env.TxIndexer.(*null.TxIndex); ok {
 		return nil, errors.New("transaction indexing is disabled")
@@ -101,7 +99,7 @@ func TxSearch(
 
 	// paginate results
 	totalCount := len(results)
-	perPage := validatePerPage(perPagePtr)
+	perPage := env.validatePerPage(perPagePtr)
 
 	page, err := validatePage(pagePtr, perPage, totalCount)
 	if err != nil {
@@ -118,7 +116,9 @@ func TxSearch(
 		var proof types.TxProof
 		if prove {
 			block := env.BlockStore.LoadBlock(r.Height)
-			proof = block.Data.Txs.Proof(int(r.Index)) // XXX: overflow on 32-bit machines
+			if block != nil {
+				proof = block.Data.Txs.Proof(int(r.Index))
+			}
 		}
 
 		apiResults = append(apiResults, &ctypes.ResultTx{
@@ -132,26 +132,4 @@ func TxSearch(
 	}
 
 	return &ctypes.ResultTxSearch{Txs: apiResults, TotalCount: totalCount}, nil
-}
-
-// TxSearchMatchEvents allows you to query for multiple transactions results and match the
-// query attributes to a common event. It returns a
-// list of transactions (maximum ?per_page entries) and the total count.
-// More: https://docs.cometbft.com/v0.34/rpc/#/Info/tx_search
-func TxSearchMatchEvents(
-	ctx *rpctypes.Context,
-	query string,
-	prove bool,
-	pagePtr, perPagePtr *int,
-	orderBy string,
-	matchEvents bool,
-) (*ctypes.ResultTxSearch, error) {
-
-	if matchEvents {
-		query = "match.events = 1 AND " + query
-	} else {
-		query = "match.events = 0 AND " + query
-	}
-	return TxSearch(ctx, query, prove, pagePtr, perPagePtr, orderBy)
-
 }

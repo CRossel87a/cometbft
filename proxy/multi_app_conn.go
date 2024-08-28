@@ -3,10 +3,10 @@ package proxy
 import (
 	"fmt"
 
-	abcicli "github.com/tendermint/tendermint/abci/client"
-	cmtlog "github.com/tendermint/tendermint/libs/log"
-	cmtos "github.com/tendermint/tendermint/libs/os"
-	"github.com/tendermint/tendermint/libs/service"
+	abcicli "github.com/cometbft/cometbft/abci/client"
+	cmtlog "github.com/cometbft/cometbft/libs/log"
+	cmtos "github.com/cometbft/cometbft/libs/os"
+	"github.com/cometbft/cometbft/libs/service"
 )
 
 const (
@@ -32,8 +32,8 @@ type AppConns interface {
 }
 
 // NewAppConns calls NewMultiAppConn.
-func NewAppConns(clientCreator ClientCreator) AppConns {
-	return NewMultiAppConn(clientCreator)
+func NewAppConns(clientCreator ClientCreator, metrics *Metrics) AppConns {
+	return NewMultiAppConn(clientCreator, metrics)
 }
 
 // multiAppConn implements AppConns.
@@ -44,6 +44,7 @@ func NewAppConns(clientCreator ClientCreator) AppConns {
 type multiAppConn struct {
 	service.BaseService
 
+	metrics       *Metrics
 	consensusConn AppConnConsensus
 	mempoolConn   AppConnMempool
 	queryConn     AppConnQuery
@@ -58,8 +59,9 @@ type multiAppConn struct {
 }
 
 // NewMultiAppConn makes all necessary abci connections to the application.
-func NewMultiAppConn(clientCreator ClientCreator) AppConns {
+func NewMultiAppConn(clientCreator ClientCreator, metrics *Metrics) AppConns {
 	multiAppConn := &multiAppConn{
+		metrics:       metrics,
 		clientCreator: clientCreator,
 	}
 	multiAppConn.BaseService = *service.NewBaseService(nil, "multiAppConn", multiAppConn)
@@ -88,7 +90,7 @@ func (app *multiAppConn) OnStart() error {
 		return err
 	}
 	app.queryConnClient = c
-	app.queryConn = NewAppConnQuery(c)
+	app.queryConn = NewAppConnQuery(c, app.metrics)
 
 	c, err = app.abciClientFor(connSnapshot)
 	if err != nil {
@@ -96,7 +98,7 @@ func (app *multiAppConn) OnStart() error {
 		return err
 	}
 	app.snapshotConnClient = c
-	app.snapshotConn = NewAppConnSnapshot(c)
+	app.snapshotConn = NewAppConnSnapshot(c, app.metrics)
 
 	c, err = app.abciClientFor(connMempool)
 	if err != nil {
@@ -104,7 +106,7 @@ func (app *multiAppConn) OnStart() error {
 		return err
 	}
 	app.mempoolConnClient = c
-	app.mempoolConn = NewAppConnMempool(c)
+	app.mempoolConn = NewAppConnMempool(c, app.metrics)
 
 	c, err = app.abciClientFor(connConsensus)
 	if err != nil {
@@ -112,7 +114,7 @@ func (app *multiAppConn) OnStart() error {
 		return err
 	}
 	app.consensusConnClient = c
-	app.consensusConn = NewAppConnConsensus(c)
+	app.consensusConn = NewAppConnConsensus(c, app.metrics)
 
 	// Kill CometBFT if the ABCI application crashes.
 	go app.killTMOnClientError()

@@ -6,14 +6,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	cfg "github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/p2p"
-	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
+	cfg "github.com/cometbft/cometbft/config"
+	"github.com/cometbft/cometbft/libs/log"
+	"github.com/cometbft/cometbft/p2p"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 )
 
 func TestUnsafeDialSeeds(t *testing.T) {
-	sw := p2p.MakeSwitch(cfg.DefaultP2PConfig(), 1, "testing", "123.123.123",
+	sw := p2p.MakeSwitch(cfg.DefaultP2PConfig(), 1,
 		func(n int, sw *p2p.Switch) *p2p.Switch { return sw })
 	err := sw.Start()
 	require.NoError(t, err)
@@ -23,6 +23,7 @@ func TestUnsafeDialSeeds(t *testing.T) {
 		}
 	})
 
+	env := &Environment{}
 	env.Logger = log.TestingLogger()
 	env.P2PPeers = sw
 
@@ -36,7 +37,7 @@ func TestUnsafeDialSeeds(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		res, err := UnsafeDialSeeds(&rpctypes.Context{}, tc.seeds)
+		res, err := env.UnsafeDialSeeds(&rpctypes.Context{}, tc.seeds)
 		if tc.isErr {
 			assert.Error(t, err)
 		} else {
@@ -47,7 +48,7 @@ func TestUnsafeDialSeeds(t *testing.T) {
 }
 
 func TestUnsafeDialPeers(t *testing.T) {
-	sw := p2p.MakeSwitch(cfg.DefaultP2PConfig(), 1, "testing", "123.123.123",
+	sw := p2p.MakeSwitch(cfg.DefaultP2PConfig(), 1,
 		func(n int, sw *p2p.Switch) *p2p.Switch { return sw })
 	sw.SetAddrBook(&p2p.AddrBookMock{
 		Addrs:        make(map[string]struct{}),
@@ -62,6 +63,7 @@ func TestUnsafeDialPeers(t *testing.T) {
 		}
 	})
 
+	env := &Environment{}
 	env.Logger = log.TestingLogger()
 	env.P2PPeers = sw
 
@@ -76,7 +78,7 @@ func TestUnsafeDialPeers(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		res, err := UnsafeDialPeers(&rpctypes.Context{}, tc.peers, tc.persistence, tc.unconditional, tc.private)
+		res, err := env.UnsafeDialPeers(&rpctypes.Context{}, tc.peers, tc.persistence, tc.unconditional, tc.private)
 		if tc.isErr {
 			assert.Error(t, err)
 		} else {

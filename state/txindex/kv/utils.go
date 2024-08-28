@@ -2,11 +2,13 @@ package kv
 
 import (
 	"fmt"
+	"math/big"
 
+	idxutil "github.com/cometbft/cometbft/internal/indexer"
+	cmtsyntax "github.com/cometbft/cometbft/libs/pubsub/query/syntax"
+	"github.com/cometbft/cometbft/state/indexer"
+	"github.com/cometbft/cometbft/types"
 	"github.com/google/orderedcode"
-	"github.com/tendermint/tendermint/libs/pubsub/query"
-	"github.com/tendermint/tendermint/state/indexer"
-	"github.com/tendermint/tendermint/types"
 )
 
 type HeightInfo struct {
@@ -25,24 +27,6 @@ func intInSlice(a int, list []int) bool {
 		}
 	}
 	return false
-}
-
-func dedupMatchEvents(conditions []query.Condition) ([]query.Condition, bool) {
-	var dedupConditions []query.Condition
-	matchEvents := false
-	for i, c := range conditions {
-		if c.CompositeKey == types.MatchEventKey {
-			// Match events should be added only via RPC as the very first query condition
-			if i == 0 && c.Op == query.OpEqual && c.Operand.(int64) == 1 {
-				dedupConditions = append(dedupConditions, c)
-				matchEvents = true
-			}
-		} else {
-			dedupConditions = append(dedupConditions, c)
-		}
-
-	}
-	return dedupConditions, matchEvents
 }
 
 func ParseEventSeqFromEventKey(key []byte) (int64, error) {
@@ -64,22 +48,25 @@ func ParseEventSeqFromEventKey(key []byte) (int64, error) {
 	return eventSeq, nil
 }
 
-func dedupHeight(conditions []query.Condition) (dedupConditions []query.Condition, heightInfo HeightInfo) {
+func dedupHeight(conditions []cmtsyntax.Condition) (dedupConditions []cmtsyntax.Condition, heightInfo HeightInfo) {
 	heightInfo.heightEqIdx = -1
-	found := false
 	heightRangeExists := false
-	var heightCondition []query.Condition
+	found := false
+	var heightCondition []cmtsyntax.Condition
 	heightInfo.onlyHeightEq = true
 	heightInfo.onlyHeightRange = true
 	for _, c := range conditions {
-		if c.CompositeKey == types.TxHeightKey {
-			if c.Op == query.OpEqual {
+		if c.Tag == types.TxHeightKey {
+			if c.Op == cmtsyntax.TEq {
 				if heightRangeExists || found {
 					continue
-				} else {
+				}
+				hFloat := c.Arg.Number()
+				if hFloat != nil {
+					h, _ := hFloat.Int64()
+					heightInfo.height = h
 					found = true
 					heightCondition = append(heightCondition, c)
-					heightInfo.height = c.Operand.(int64)
 				}
 			} else {
 				heightInfo.onlyHeightEq = false
@@ -87,10 +74,8 @@ func dedupHeight(conditions []query.Condition) (dedupConditions []query.Conditio
 				dedupConditions = append(dedupConditions, c)
 			}
 		} else {
-			if c.CompositeKey != types.MatchEventKey {
-				heightInfo.onlyHeightRange = false
-				heightInfo.onlyHeightEq = false
-			}
+			heightInfo.onlyHeightRange = false
+			heightInfo.onlyHeightEq = false
 			dedupConditions = append(dedupConditions, c)
 		}
 	}
@@ -108,15 +93,16 @@ func dedupHeight(conditions []query.Condition) (dedupConditions []query.Conditio
 	return dedupConditions, heightInfo
 }
 
-func checkHeightConditions(heightInfo HeightInfo, keyHeight int64) bool {
+func checkHeightConditions(heightInfo HeightInfo, keyHeight int64) (bool, error) {
 	if heightInfo.heightRange.Key != "" {
-		if !checkBounds(heightInfo.heightRange, keyHeight) {
-			return false
+		withinBounds, err := idxutil.CheckBounds(heightInfo.heightRange, big.NewInt(keyHeight))
+		if err != nil || !withinBounds {
+			return false, err
 		}
 	} else {
 		if heightInfo.height != 0 && keyHeight != heightInfo.height {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }

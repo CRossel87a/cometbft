@@ -1,6 +1,7 @@
 package privval
 
 import (
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -8,11 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tendermint/tendermint/crypto/ed25519"
-	"github.com/tendermint/tendermint/libs/log"
-	cmtnet "github.com/tendermint/tendermint/libs/net"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	"github.com/tendermint/tendermint/types"
+	"github.com/cometbft/cometbft/crypto/ed25519"
+	"github.com/cometbft/cometbft/libs/log"
+	cmtnet "github.com/cometbft/cometbft/libs/net"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
+	"github.com/cometbft/cometbft/types"
 )
 
 var (
@@ -212,4 +213,29 @@ func getMockEndpoints(
 	<-endpointIsOpenCh
 
 	return listenerEndpoint, dialerEndpoint
+}
+
+func TestSignerListenerEndpointServiceLoop(t *testing.T) {
+	listenerEndpoint := NewSignerListenerEndpoint(
+		log.TestingLogger(),
+		&testListener{initialErrs: 5},
+	)
+
+	require.NoError(t, listenerEndpoint.Start())
+	require.NoError(t, listenerEndpoint.WaitForConnection(time.Second))
+}
+
+type testListener struct {
+	net.Listener
+	initialErrs int
+}
+
+func (l *testListener) Accept() (net.Conn, error) {
+	if l.initialErrs > 0 {
+		l.initialErrs--
+
+		return nil, errors.New("accept error")
+	}
+
+	return nil, nil // Note this doesn't actually return a valid connection, it just doesn't error.
 }

@@ -3,7 +3,7 @@ package p2p
 import (
 	"fmt"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/cosmos/gogoproto/proto"
 )
 
 func (m *PexAddrs) Wrap() proto.Message {

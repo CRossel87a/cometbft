@@ -1,15 +1,19 @@
 package state
 
 import (
-	mempl "github.com/tendermint/tendermint/mempool"
-	"github.com/tendermint/tendermint/types"
+	mempl "github.com/cometbft/cometbft/mempool"
+	"github.com/cometbft/cometbft/types"
 )
 
 // TxPreCheck returns a function to filter transactions before processing.
 // The function limits the size of a transaction to the block's maximum data size.
 func TxPreCheck(state State) mempl.PreCheckFunc {
+	maxBytes := state.ConsensusParams.Block.MaxBytes
+	if maxBytes == -1 {
+		maxBytes = int64(types.MaxBlockSizeBytes)
+	}
 	maxDataBytes := types.MaxDataBytesNoEvidence(
-		state.ConsensusParams.Block.MaxBytes,
+		maxBytes,
 		state.Validators.Size(),
 	)
 	return mempl.PreCheckMaxBytes(maxDataBytes)

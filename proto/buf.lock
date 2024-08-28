@@ -2,6 +2,7 @@
 version: v1
 deps:
   - remote: buf.build
-    owner: gogo
-    repository: protobuf
-    commit: 4df00b267f944190a229ce3695781e99
+    owner: cosmos
+    repository: gogo-proto
+    commit: 5e5b9fdd01804356895f8f79a6f1ddc1
+    digest: shake256:0b85da49e2e5f9ebc4806eae058e2f56096ff3b1c59d1fb7c190413dd15f45dd456f0b69ced9059341c80795d2b6c943de15b120a9e0308b499e43e4b5fc2952

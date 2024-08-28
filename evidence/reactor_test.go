@@ -9,24 +9,23 @@ import (
 
 	"github.com/fortytw2/leaktest"
 	"github.com/go-kit/log/term"
-	"github.com/gogo/protobuf/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	dbm "github.com/cometbft/cometbft-db"
 
-	cfg "github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/crypto"
-	"github.com/tendermint/tendermint/crypto/tmhash"
-	"github.com/tendermint/tendermint/evidence"
-	"github.com/tendermint/tendermint/evidence/mocks"
-	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/p2p"
-	p2pmocks "github.com/tendermint/tendermint/p2p/mocks"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
-	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
+	cfg "github.com/cometbft/cometbft/config"
+	"github.com/cometbft/cometbft/crypto"
+	"github.com/cometbft/cometbft/crypto/tmhash"
+	"github.com/cometbft/cometbft/evidence"
+	"github.com/cometbft/cometbft/evidence/mocks"
+	"github.com/cometbft/cometbft/libs/log"
+	"github.com/cometbft/cometbft/p2p"
+	p2pmocks "github.com/cometbft/cometbft/p2p/mocks"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	sm "github.com/cometbft/cometbft/state"
+	"github.com/cometbft/cometbft/types"
 )
 
 var (
@@ -153,9 +152,10 @@ func TestReactorsGossipNoCommittedEvidence(t *testing.T) {
 	// the first reactor receives three more evidence
 	evList = make([]types.Evidence, 3)
 	for i := 0; i < 3; i++ {
-		ev := types.NewMockDuplicateVoteEvidenceWithValidator(height-3+int64(i),
+		ev, err := types.NewMockDuplicateVoteEvidenceWithValidator(height-3+int64(i),
 			time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC), val, state.ChainID)
-		err := pools[0].AddEvidence(ev)
+		require.NoError(t, err)
+		err = pools[0].AddEvidence(ev)
 		require.NoError(t, err)
 		evList[i] = ev
 	}
@@ -200,7 +200,7 @@ func TestReactorBroadcastEvidenceMemoryLeak(t *testing.T) {
 	pool, err := evidence.NewPool(evidenceDB, stateStore, blockStore)
 	require.NoError(t, err)
 
-	p := &p2pmocks.PeerEnvelopeSender{}
+	p := &p2pmocks.Peer{}
 
 	p.On("IsRunning").Once().Return(true)
 	p.On("IsRunning").Return(false)
@@ -208,7 +208,7 @@ func TestReactorBroadcastEvidenceMemoryLeak(t *testing.T) {
 	// i.e. broadcastEvidenceRoutine finishes when peer is stopped
 	defer leaktest.CheckTimeout(t, 10*time.Second)()
 
-	p.On("SendEnvelope", mock.MatchedBy(func(i interface{}) bool {
+	p.On("Send", mock.MatchedBy(func(i interface{}) bool {
 		e, ok := i.(p2p.Envelope)
 		return ok && e.ChannelID == evidence.EvidenceChannel
 	})).Return(false)
@@ -241,7 +241,8 @@ func evidenceLogger() log.Logger {
 
 // connect N evidence reactors through N switches
 func makeAndConnectReactorsAndPools(config *cfg.Config, stateStores []sm.Store) ([]*evidence.Reactor,
-	[]*evidence.Pool) {
+	[]*evidence.Pool,
+) {
 	N := len(stateStores)
 
 	reactors := make([]*evidence.Reactor, N)
@@ -267,7 +268,6 @@ func makeAndConnectReactorsAndPools(config *cfg.Config, stateStores []sm.Store) 
 	p2p.MakeConnectedSwitches(config.P2P, N, func(i int, s *p2p.Switch) *p2p.Switch {
 		s.AddReactor("EVIDENCE", reactors[i])
 		return s
-
 	}, p2p.Connect2Switches)
 
 	return reactors, pools
@@ -331,9 +331,10 @@ func _waitForEvidence(
 func sendEvidence(t *testing.T, evpool *evidence.Pool, val types.PrivValidator, n int) types.EvidenceList {
 	evList := make([]types.Evidence, n)
 	for i := 0; i < n; i++ {
-		ev := types.NewMockDuplicateVoteEvidenceWithValidator(int64(i+1),
+		ev, err := types.NewMockDuplicateVoteEvidenceWithValidator(int64(i+1),
 			time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC), val, evidenceChainID)
-		err := evpool.AddEvidence(ev)
+		require.NoError(t, err)
+		err = evpool.AddEvidence(ev)
 		require.NoError(t, err)
 		evList[i] = ev
 	}
@@ -349,7 +350,7 @@ func (ps peerState) GetHeight() int64 {
 }
 
 func exampleVote(t byte) *types.Vote {
-	var stamp, err = time.Parse(types.TimeFormat, "2017-12-25T03:00:01.234Z")
+	stamp, err := time.Parse(types.TimeFormat, "2017-12-25T03:00:01.234Z")
 	if err != nil {
 		panic(err)
 	}
@@ -370,37 +371,9 @@ func exampleVote(t byte) *types.Vote {
 		ValidatorIndex:   56789,
 	}
 }
-func TestLegacyReactorReceiveBasic(t *testing.T) {
-	config := cfg.TestConfig()
-	N := 1
-
-	stateDBs := make([]sm.Store, N)
-	val := types.NewMockPV()
-	stateDBs[0] = initializeValidatorState(val, 1)
-
-	reactors, _ := makeAndConnectReactorsAndPools(config, stateDBs)
-
-	var (
-		reactor = reactors[0]
-		peer    = &p2pmocks.Peer{}
-	)
-	quitChan := make(<-chan struct{})
-	peer.On("Quit").Return(quitChan)
-
-	reactor.InitPeer(peer)
-	reactor.AddPeer(peer)
-	e := &cmtproto.EvidenceList{}
-	msg, err := proto.Marshal(e)
-	assert.NoError(t, err)
-
-	assert.NotPanics(t, func() {
-		reactor.Receive(evidence.EvidenceChannel, peer, msg)
-	})
-}
 
 //nolint:lll //ignore line length for tests
 func TestEvidenceVectors(t *testing.T) {
-
 	val := &types.Validator{
 		Address:     crypto.AddressHash([]byte("validator_address")),
 		VotingPower: 10,
@@ -408,12 +381,13 @@ func TestEvidenceVectors(t *testing.T) {
 
 	valSet := types.NewValidatorSet([]*types.Validator{val})
 
-	dupl := types.NewDuplicateVoteEvidence(
+	dupl, err := types.NewDuplicateVoteEvidence(
 		exampleVote(1),
 		exampleVote(2),
 		defaultEvidenceTime,
 		valSet,
 	)
+	require.NoError(t, err)
 
 	testCases := []struct {
 		testName     string
@@ -443,5 +417,4 @@ func TestEvidenceVectors(t *testing.T) {
 		require.Equal(t, tc.expBytes, hex.EncodeToString(bz), tc.testName)
 
 	}
-
 }

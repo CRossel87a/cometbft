@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tendermint/tendermint/types"
+	"github.com/cometbft/cometbft/types"
 )
 
 // Waiter is informed of current height, decided whether to quit early
@@ -70,7 +70,7 @@ func WaitForOneEvent(c EventsClient, evtTyp string, timeout time.Duration) (type
 	// make sure to unregister after the test is over
 	defer func() {
 		if deferErr := c.UnsubscribeAll(ctx, subscriber); deferErr != nil {
-			panic(err)
+			panic(deferErr)
 		}
 	}()
 

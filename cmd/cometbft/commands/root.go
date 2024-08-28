@@ -3,15 +3,14 @@ package commands
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	cfg "github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/libs/cli"
-	cmtflags "github.com/tendermint/tendermint/libs/cli/flags"
-	"github.com/tendermint/tendermint/libs/log"
+	cfg "github.com/cometbft/cometbft/config"
+	"github.com/cometbft/cometbft/libs/cli"
+	cmtflags "github.com/cometbft/cometbft/libs/cli/flags"
+	"github.com/cometbft/cometbft/libs/log"
 )
 
 var (
@@ -40,7 +39,7 @@ func ParseConfig(cmd *cobra.Command) (*cfg.Config, error) {
 	if os.Getenv("CMTHOME") != "" {
 		home = os.Getenv("CMTHOME")
 	} else if os.Getenv("TMHOME") != "" {
-		//XXX: Deprecated.
+		// XXX: Deprecated.
 		home = os.Getenv("TMHOME")
 		logger.Error("Deprecated environment variable TMHOME identified. CMTHOME should be used instead.")
 	} else {
@@ -56,6 +55,11 @@ func ParseConfig(cmd *cobra.Command) (*cfg.Config, error) {
 	cfg.EnsureRoot(conf.RootDir)
 	if err := conf.ValidateBasic(); err != nil {
 		return nil, fmt.Errorf("error in config file: %v", err)
+	}
+	if warnings := conf.CheckDeprecated(); len(warnings) > 0 {
+		for _, warning := range warnings {
+			logger.Info("deprecated usage found in configuration file", "usage", warning)
+		}
 	}
 	return conf, nil
 }
@@ -90,11 +94,4 @@ var RootCmd = &cobra.Command{
 		logger = logger.With("module", "main")
 		return nil
 	},
-}
-
-// deprecateSnakeCase is a util function for 0.34.1. Should be removed in 0.35
-func deprecateSnakeCase(cmd *cobra.Command, args []string) {
-	if strings.Contains(cmd.CalledAs(), "_") {
-		fmt.Println("Deprecated: snake_case commands will be replaced by hyphen-case commands in the next major release")
-	}
 }

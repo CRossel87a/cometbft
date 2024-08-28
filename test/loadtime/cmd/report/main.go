@@ -11,8 +11,8 @@ import (
 
 	dbm "github.com/cometbft/cometbft-db"
 
-	"github.com/tendermint/tendermint/store"
-	"github.com/tendermint/tendermint/test/loadtime/report"
+	"github.com/cometbft/cometbft/store"
+	"github.com/cometbft/cometbft/test/loadtime/report"
 )
 
 var (
@@ -75,8 +75,7 @@ func main() {
 			"\tMinimum Latency: %s\n"+
 			"\tMaximum Latency: %s\n"+
 			"\tAverage Latency: %s\n"+
-			"\tStandard Deviation: %s\n\n", r.ID, r.Connections, r.Rate, r.Size, len(r.All), r.NegativeCount, r.Min, r.Max, r.Avg, r.StdDev) //nolint:lll
-
+			"\tStandard Deviation: %s\n\n", r.ID, r.Connections, r.Rate, r.Size, len(r.All), r.NegativeCount, r.Min, r.Max, r.Avg, r.StdDev)
 	}
 	fmt.Printf("Total Invalid Tx: %d\n", rs.ErrorCount())
 }
@@ -96,7 +95,7 @@ func toCSVRecords(rs []report.Report) [][]string {
 		rateStr := strconv.FormatInt(int64(r.Rate), 10)
 		sizeStr := strconv.FormatInt(int64(r.Size), 10)
 		for i, v := range r.All {
-			res[offset+i] = []string{idStr, strconv.FormatInt(v.BlockTime.UnixNano(), 10), strconv.FormatInt(int64(v.Duration), 10), fmt.Sprintf("%X", v.Hash), connStr, rateStr, sizeStr} //nolint: lll
+			res[offset+i] = []string{idStr, strconv.FormatInt(v.BlockTime.UnixNano(), 10), strconv.FormatInt(int64(v.Duration), 10), fmt.Sprintf("%X", v.Hash), connStr, rateStr, sizeStr}
 		}
 		offset += len(r.All)
 	}

@@ -136,13 +136,13 @@ Let's assume that after the last run the proposer priorities were as shown in fi
 The procedure could continue without modifications. However, after a sufficiently large number of modifications in validator set, the priority values would migrate towards maximum or minimum allowed values causing truncations due to overflow detection.
 For this reason, the selection procedure adds another __new step__ that centers the current priority values such that the priority sum remains close to 0.
 
-| Priority   Run | -3 | -2 | -1 | 0 | 1  | 2  | 4 | Comment               |
-|----------------|----|----|----|---|----|----|---|-----------------------|
-| last run       | p3 |    |    |   | p1 | p2 |   | __remove p2__         |
-| nextrun        |    |    |    |   |    |    |   |                       |
-| __new step__   |    | p3 |    |   |    | p1 |   | A(i) -= avg, avg = -1 |
-|                |    |    |    |   | p3 | p1 |   | A(i)+=VP(i)           |
-|                |    |    | p1 |   | p3 |    |   | A(p1)-= P             |
+| Priority   Run | -3 | -2 | -1 | 0 | 1  | 2  | 3  | Comment               |
+|----------------|----|----|----|---|----|----|----|-----------------------|
+| last run       | p3 |    |    |   | p1 | p2 |    | __remove p2__         |
+| nextrun        |    |    |    |   |    |    |    |                       |
+| __new step__   |    | p3 |    |   |    | p1 |    | A(i) -= avg, avg = -1 |
+|                |    |    |    |   | p3 |    | p1 | A(i)+=VP(i)           |
+|                |    |    | p1 |   | p3 |    |    | A(p1)-= P             |
 
 The modified selection algorithm is:
 
@@ -179,7 +179,7 @@ In order to prevent this, when a new validator is added, its initial priority is
 
 where P is the total voting power of the set including V.
 
-Curent implementation uses the penalty factor of 1.125 because it provides a small punishment that is efficient to calculate. See [here](https://github.com/tendermint/tendermint/pull/2785#discussion_r235038971) for more details.
+Current implementation uses the penalty factor of 1.125 because it provides a small punishment that is efficient to calculate. See [here](https://github.com/tendermint/tendermint/pull/2785#discussion_r235038971) for more details.
 
 If we consider the validator set where p3 has just been added:
 

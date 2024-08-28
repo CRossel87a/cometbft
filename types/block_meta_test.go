@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tendermint/tendermint/crypto/tmhash"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
+	"github.com/cometbft/cometbft/crypto/tmhash"
+	cmtrand "github.com/cometbft/cometbft/libs/rand"
 )
 
 func TestBlockMeta_ToProto(t *testing.T) {
@@ -34,7 +34,7 @@ func TestBlockMeta_ToProto(t *testing.T) {
 		t.Run(tt.testName, func(t *testing.T) {
 			pb := tt.bm.ToProto()
 
-			bm, err := BlockMetaFromProto(pb)
+			bm, err := BlockMetaFromTrustedProto(pb)
 
 			if !tt.expErr {
 				require.NoError(t, err, tt.testName)

@@ -1,13 +1,13 @@
 package proxy
 
 import (
-	"github.com/tendermint/tendermint/libs/bytes"
-	lrpc "github.com/tendermint/tendermint/light/rpc"
-	rpcclient "github.com/tendermint/tendermint/rpc/client"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	rpcserver "github.com/tendermint/tendermint/rpc/jsonrpc/server"
-	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
-	"github.com/tendermint/tendermint/types"
+	"github.com/cometbft/cometbft/libs/bytes"
+	lrpc "github.com/cometbft/cometbft/light/rpc"
+	rpcclient "github.com/cometbft/cometbft/rpc/client"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	rpcserver "github.com/cometbft/cometbft/rpc/jsonrpc/server"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
+	"github.com/cometbft/cometbft/types"
 )
 
 func RPCRoutes(c *lrpc.Client) map[string]*rpcserver.RPCFunc {
@@ -25,12 +25,14 @@ func RPCRoutes(c *lrpc.Client) map[string]*rpcserver.RPCFunc {
 		"genesis":              rpcserver.NewRPCFunc(makeGenesisFunc(c), "", rpcserver.Cacheable()),
 		"genesis_chunked":      rpcserver.NewRPCFunc(makeGenesisChunkedFunc(c), "", rpcserver.Cacheable()),
 		"block":                rpcserver.NewRPCFunc(makeBlockFunc(c), "height", rpcserver.Cacheable("height")),
+		"header":               rpcserver.NewRPCFunc(makeHeaderFunc(c), "height", rpcserver.Cacheable("height")),
+		"header_by_hash":       rpcserver.NewRPCFunc(makeHeaderByHashFunc(c), "hash", rpcserver.Cacheable()),
 		"block_by_hash":        rpcserver.NewRPCFunc(makeBlockByHashFunc(c), "hash", rpcserver.Cacheable()),
 		"block_results":        rpcserver.NewRPCFunc(makeBlockResultsFunc(c), "height", rpcserver.Cacheable("height")),
 		"commit":               rpcserver.NewRPCFunc(makeCommitFunc(c), "height", rpcserver.Cacheable("height")),
 		"tx":                   rpcserver.NewRPCFunc(makeTxFunc(c), "hash,prove", rpcserver.Cacheable()),
-		"tx_search":            rpcserver.NewRPCFunc(makeTxSearchFuncMatchEvents(c), "query,prove,page,per_page,order_by,match_events"),
-		"block_search":         rpcserver.NewRPCFunc(makeBlockSearchFuncMatchEvents(c), "query,page,per_page,order_by,match_events"),
+		"tx_search":            rpcserver.NewRPCFunc(makeTxSearchFunc(c), "query,prove,page,per_page,order_by"),
+		"block_search":         rpcserver.NewRPCFunc(makeBlockSearchFunc(c), "query,page,per_page,order_by"),
 		"validators":           rpcserver.NewRPCFunc(makeValidatorsFunc(c), "height,page,per_page", rpcserver.Cacheable("height")),
 		"dump_consensus_state": rpcserver.NewRPCFunc(makeDumpConsensusStateFunc(c), ""),
 		"consensus_state":      rpcserver.NewRPCFunc(makeConsensusStateFunc(c), ""),
@@ -62,7 +64,6 @@ func makeHealthFunc(c *lrpc.Client) rpcHealthFunc {
 
 type rpcStatusFunc func(ctx *rpctypes.Context) (*ctypes.ResultStatus, error)
 
-//nolint:interfacer
 func makeStatusFunc(c *lrpc.Client) rpcStatusFunc {
 	return func(ctx *rpctypes.Context) (*ctypes.ResultStatus, error) {
 		return c.Status(ctx.Context())
@@ -109,6 +110,22 @@ func makeBlockFunc(c *lrpc.Client) rpcBlockFunc {
 	}
 }
 
+type rpcHeaderFunc func(ctx *rpctypes.Context, height *int64) (*ctypes.ResultHeader, error)
+
+func makeHeaderFunc(c *lrpc.Client) rpcHeaderFunc {
+	return func(ctx *rpctypes.Context, height *int64) (*ctypes.ResultHeader, error) {
+		return c.Header(ctx.Context(), height)
+	}
+}
+
+type rpcHeaderByHashFunc func(ctx *rpctypes.Context, hash []byte) (*ctypes.ResultHeader, error)
+
+func makeHeaderByHashFunc(c *lrpc.Client) rpcHeaderByHashFunc {
+	return func(ctx *rpctypes.Context, hash []byte) (*ctypes.ResultHeader, error) {
+		return c.HeaderByHash(ctx.Context(), hash)
+	}
+}
+
 type rpcBlockByHashFunc func(ctx *rpctypes.Context, hash []byte) (*ctypes.ResultBlock, error)
 
 func makeBlockByHashFunc(c *lrpc.Client) rpcBlockByHashFunc {
@@ -141,56 +158,42 @@ func makeTxFunc(c *lrpc.Client) rpcTxFunc {
 	}
 }
 
-type rpcTxSearchFuncMatchEvents func(
+type rpcTxSearchFunc func(
 	ctx *rpctypes.Context,
 	query string,
 	prove bool,
 	page, perPage *int,
 	orderBy string,
-	matchEvents bool,
 ) (*ctypes.ResultTxSearch, error)
 
-func makeTxSearchFuncMatchEvents(c *lrpc.Client) rpcTxSearchFuncMatchEvents {
+func makeTxSearchFunc(c *lrpc.Client) rpcTxSearchFunc {
 	return func(
 		ctx *rpctypes.Context,
 		query string,
 		prove bool,
 		page, perPage *int,
 		orderBy string,
-		matchEvents bool,
 	) (*ctypes.ResultTxSearch, error) {
-		if matchEvents {
-			query = "match.events = 1 AND " + query
-		} else {
-			query = "match.events = 0 AND " + query
-		}
 		return c.TxSearch(ctx.Context(), query, prove, page, perPage, orderBy)
 	}
 }
 
-type rpcBlockSearchFuncMatchEvents func(
+type rpcBlockSearchFunc func(
 	ctx *rpctypes.Context,
 	query string,
 	prove bool,
 	page, perPage *int,
 	orderBy string,
-	matchEvents bool,
 ) (*ctypes.ResultBlockSearch, error)
 
-func makeBlockSearchFuncMatchEvents(c *lrpc.Client) rpcBlockSearchFuncMatchEvents {
+func makeBlockSearchFunc(c *lrpc.Client) rpcBlockSearchFunc {
 	return func(
 		ctx *rpctypes.Context,
 		query string,
 		prove bool,
 		page, perPage *int,
 		orderBy string,
-		matchEvents bool,
 	) (*ctypes.ResultBlockSearch, error) {
-		if matchEvents {
-			query = "match.events = 1 AND " + query
-		} else {
-			query = "match.events = 0 AND " + query
-		}
 		return c.BlockSearch(ctx.Context(), query, page, perPage, orderBy)
 	}
 }
@@ -292,7 +295,6 @@ func makeABCIInfoFunc(c *lrpc.Client) rpcABCIInfoFunc {
 
 type rpcBroadcastEvidenceFunc func(ctx *rpctypes.Context, ev types.Evidence) (*ctypes.ResultBroadcastEvidence, error)
 
-//nolint:interfacer
 func makeBroadcastEvidenceFunc(c *lrpc.Client) rpcBroadcastEvidenceFunc {
 	return func(ctx *rpctypes.Context, ev types.Evidence) (*ctypes.ResultBroadcastEvidence, error) {
 		return c.BroadcastEvidence(ctx.Context(), ev)

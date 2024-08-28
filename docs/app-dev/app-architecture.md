@@ -1,5 +1,5 @@
 ---
-order: 3
+order: 4
 ---
 
 # Application Architecture Guide
@@ -20,8 +20,8 @@ through the CometBFT RPC. The CometBFT process communicates with
 a local ABCI application, where the user query or transaction is actually
 processed.
 
-The ABCI application must be a deterministic result of the consensus
-engine of CometBFT - any external influence on the application state that didn't
+The ABCI application must be a deterministic result of the CometBFT
+consensus - any external influence on the application state that didn't
 come through CometBFT could cause a consensus failure. Thus _nothing_
 should communicate with the ABCI application except CometBFT via ABCI.
 
@@ -50,6 +50,6 @@ CometBFT.
 See the following for more extensive documentation:
 
 - [Interchain Standard for the Light-Client REST API](https://github.com/cosmos/cosmos-sdk/pull/1617) (legacy/deprecated)
-- [CometBFT RPC Docs](https://docs.cometbft.com/v0.34/rpc/)
+- [CometBFT RPC Docs](../rpc)
 - [CometBFT in Production](../core/running-in-production.md)
-- [ABCI spec](https://github.com/cometbft/cometbft/tree/v0.34.x/spec/abci)
+- [ABCI spec](../spec/abci)

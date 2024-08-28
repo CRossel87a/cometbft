@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tendermint/tendermint/abci/example/kvstore"
-	nm "github.com/tendermint/tendermint/node"
-	rpctest "github.com/tendermint/tendermint/rpc/test"
+	"github.com/cometbft/cometbft/abci/example/kvstore"
+	nm "github.com/cometbft/cometbft/node"
+	rpctest "github.com/cometbft/cometbft/rpc/test"
 )
 
 var node *nm.Node
@@ -18,9 +18,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	app := kvstore.NewPersistentKVStoreApplication(dir)
+	app := kvstore.NewPersistentApplication(dir)
 	// If testing block event generation
-	// app.SetGenBlockEvents() needs to be called here
+	// app.SetGenBlockEvents() // needs to be called here (see TestBlockSearch in rpc_test.go)
 	node = rpctest.StartTendermint(app)
 
 	code := m.Run()

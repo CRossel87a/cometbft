@@ -10,15 +10,12 @@ import (
 
 	dbm "github.com/cometbft/cometbft-db"
 
-	abci "github.com/tendermint/tendermint/abci/types"
-	cfg "github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/crypto"
-	"github.com/tendermint/tendermint/crypto/ed25519"
-	cmtrand "github.com/tendermint/tendermint/libs/rand"
-	cmtstate "github.com/tendermint/tendermint/proto/tendermint/state"
-	cmtproto "github.com/tendermint/tendermint/proto/tendermint/types"
-	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
+	abci "github.com/cometbft/cometbft/abci/types"
+	"github.com/cometbft/cometbft/crypto/ed25519"
+	"github.com/cometbft/cometbft/internal/test"
+	cmtstate "github.com/cometbft/cometbft/proto/tendermint/state"
+	sm "github.com/cometbft/cometbft/state"
+	"github.com/cometbft/cometbft/types"
 )
 
 func TestStoreLoadValidators(t *testing.T) {
@@ -51,7 +48,7 @@ func TestStoreLoadValidators(t *testing.T) {
 func BenchmarkLoadValidators(b *testing.B) {
 	const valSetSize = 100
 
-	config := cfg.ResetTestRoot("state_")
+	config := test.ResetTestRoot("state_")
 	defer os.RemoveAll(config.RootDir)
 	dbType := dbm.BackendType(config.DBBackend)
 	stateDB, err := dbm.NewDB("state", dbType, config.DBDir())
@@ -89,23 +86,33 @@ func BenchmarkLoadValidators(b *testing.B) {
 
 func TestPruneStates(t *testing.T) {
 	testcases := map[string]struct {
-		makeHeights  int64
-		pruneFrom    int64
-		pruneTo      int64
-		expectErr    bool
-		expectVals   []int64
-		expectParams []int64
-		expectABCI   []int64
+		makeHeights             int64
+		pruneFrom               int64
+		pruneTo                 int64
+		evidenceThresholdHeight int64
+		expectErr               bool
+		expectVals              []int64
+		expectParams            []int64
+		expectABCI              []int64
 	}{
-		"error on pruning from 0":      {100, 0, 5, true, nil, nil, nil},
-		"error when from > to":         {100, 3, 2, true, nil, nil, nil},
-		"error when from == to":        {100, 3, 3, true, nil, nil, nil},
-		"error when to does not exist": {100, 1, 101, true, nil, nil, nil},
-		"prune all":                    {100, 1, 100, false, []int64{93, 100}, []int64{95, 100}, []int64{100}},
-		"prune some": {10, 2, 8, false, []int64{1, 3, 8, 9, 10},
-			[]int64{1, 5, 8, 9, 10}, []int64{1, 8, 9, 10}},
-		"prune across checkpoint": {100001, 1, 100001, false, []int64{99993, 100000, 100001},
-			[]int64{99995, 100001}, []int64{100001}},
+		"error on pruning from 0":      {100, 0, 5, 100, true, nil, nil, nil},
+		"error when from > to":         {100, 3, 2, 2, true, nil, nil, nil},
+		"error when from == to":        {100, 3, 3, 3, true, nil, nil, nil},
+		"error when to does not exist": {100, 1, 101, 101, true, nil, nil, nil},
+		"prune all":                    {100, 1, 100, 100, false, []int64{93, 100}, []int64{95, 100}, []int64{100}},
+		"prune some": {
+			10, 2, 8, 8, false,
+			[]int64{1, 3, 8, 9, 10},
+			[]int64{1, 5, 8, 9, 10},
+			[]int64{1, 8, 9, 10},
+		},
+		"prune across checkpoint": {
+			100001, 1, 100001, 100001, false,
+			[]int64{99993, 100000, 100001},
+			[]int64{99995, 100001},
+			[]int64{100001},
+		},
+		"prune when evidence height < height": {20, 1, 18, 17, false, []int64{13, 17, 18, 19, 20}, []int64{15, 18, 19, 20}, []int64{18, 19, 20}},
 	}
 	for name, tc := range testcases {
 		tc := tc
@@ -118,7 +125,7 @@ func TestPruneStates(t *testing.T) {
 
 			// Generate a bunch of state data. Validators change for heights ending with 3, and
 			// parameters when ending with 5.
-			validator := &types.Validator{Address: cmtrand.Bytes(crypto.AddressSize), VotingPower: 100, PubKey: pk}
+			validator := &types.Validator{Address: pk.Address(), VotingPower: 100, PubKey: pk}
 			validatorSet := &types.ValidatorSet{
 				Validators: []*types.Validator{validator},
 				Proposer:   validator,
@@ -139,8 +146,8 @@ func TestPruneStates(t *testing.T) {
 					LastBlockHeight: h - 1,
 					Validators:      validatorSet,
 					NextValidators:  validatorSet,
-					ConsensusParams: cmtproto.ConsensusParams{
-						Block: cmtproto.BlockParams{MaxBytes: 10e6},
+					ConsensusParams: types.ConsensusParams{
+						Block: types.BlockParams{MaxBytes: 10e6},
 					},
 					LastHeightValidatorsChanged:      valsChanged,
 					LastHeightConsensusParamsChanged: paramsChanged,
@@ -153,18 +160,19 @@ func TestPruneStates(t *testing.T) {
 				err := stateStore.Save(state)
 				require.NoError(t, err)
 
-				err = stateStore.SaveABCIResponses(h, &cmtstate.ABCIResponses{
-					DeliverTxs: []*abci.ResponseDeliverTx{
+				err = stateStore.SaveFinalizeBlockResponse(h, &abci.ResponseFinalizeBlock{
+					TxResults: []*abci.ExecTxResult{
 						{Data: []byte{1}},
 						{Data: []byte{2}},
 						{Data: []byte{3}},
 					},
+					AppHash: make([]byte, 1),
 				})
 				require.NoError(t, err)
 			}
 
 			// Test assertions
-			err := stateStore.PruneStates(tc.pruneFrom, tc.pruneTo)
+			err := stateStore.PruneStates(tc.pruneFrom, tc.pruneTo, tc.evidenceThresholdHeight)
 			if tc.expectErr {
 				require.Error(t, err)
 				return
@@ -188,12 +196,13 @@ func TestPruneStates(t *testing.T) {
 				params, err := stateStore.LoadConsensusParams(h)
 				if expectParams[h] {
 					require.NoError(t, err, "params height %v", h)
-					require.False(t, params.Equal(&cmtproto.ConsensusParams{}))
+					require.NotEmpty(t, params)
 				} else {
 					require.Error(t, err, "params height %v", h)
+					require.Empty(t, params)
 				}
 
-				abci, err := stateStore.LoadABCIResponses(h)
+				abci, err := stateStore.LoadFinalizeBlockResponse(h)
 				if expectABCI[h] {
 					require.NoError(t, err, "abci height %v", h)
 					require.NotNil(t, abci)
@@ -206,22 +215,18 @@ func TestPruneStates(t *testing.T) {
 	}
 }
 
-func TestABCIResponsesResultsHash(t *testing.T) {
-	responses := &cmtstate.ABCIResponses{
-		BeginBlock: &abci.ResponseBeginBlock{},
-		DeliverTxs: []*abci.ResponseDeliverTx{
-			{Code: 32, Data: []byte("Hello"), Log: "Huh?"},
-		},
-		EndBlock: &abci.ResponseEndBlock{},
+func TestTxResultsHash(t *testing.T) {
+	txResults := []*abci.ExecTxResult{
+		{Code: 32, Data: []byte("Hello"), Log: "Huh?"},
 	}
 
-	root := sm.ABCIResponsesResultsHash(responses)
+	root := sm.TxResultsHash(txResults)
 
-	// root should be Merkle tree root of DeliverTxs responses
-	results := types.NewResults(responses.DeliverTxs)
+	// root should be Merkle tree root of ExecTxResult responses
+	results := types.NewResults(txResults)
 	assert.Equal(t, root, results.Hash())
 
-	// test we can prove first DeliverTx
+	// test we can prove first ExecTxResult
 	proof := results.ProveResult(0)
 	bz, err := results[0].Marshal()
 	require.NoError(t, err)
@@ -236,41 +241,40 @@ func sliceToMap(s []int64) map[int64]bool {
 	return m
 }
 
-func TestLastABCIResponses(t *testing.T) {
+func TestLastFinalizeBlockResponses(t *testing.T) {
 	// create an empty state store.
 	t.Run("Not persisting responses", func(t *testing.T) {
 		stateDB := dbm.NewMemDB()
 		stateStore := sm.NewStore(stateDB, sm.StoreOptions{
 			DiscardABCIResponses: false,
 		})
-		responses, err := stateStore.LoadABCIResponses(1)
+		responses, err := stateStore.LoadFinalizeBlockResponse(1)
 		require.Error(t, err)
 		require.Nil(t, responses)
 		// stub the abciresponses.
-		response1 := &cmtstate.ABCIResponses{
-			BeginBlock: &abci.ResponseBeginBlock{},
-			DeliverTxs: []*abci.ResponseDeliverTx{
+		response1 := &abci.ResponseFinalizeBlock{
+			TxResults: []*abci.ExecTxResult{
 				{Code: 32, Data: []byte("Hello"), Log: "Huh?"},
 			},
-			EndBlock: &abci.ResponseEndBlock{},
+			AppHash: make([]byte, 1),
 		}
 		// create new db and state store and set discard abciresponses to false.
 		stateDB = dbm.NewMemDB()
 		stateStore = sm.NewStore(stateDB, sm.StoreOptions{DiscardABCIResponses: false})
 		height := int64(10)
 		// save the last abci response.
-		err = stateStore.SaveABCIResponses(height, response1)
+		err = stateStore.SaveFinalizeBlockResponse(height, response1)
 		require.NoError(t, err)
-		// search for the last abciresponse and check if it has saved.
-		lastResponse, err := stateStore.LoadLastABCIResponse(height)
+		// search for the last finalize block response and check if it has saved.
+		lastResponse, err := stateStore.LoadLastFinalizeBlockResponse(height)
 		require.NoError(t, err)
 		// check to see if the saved response height is the same as the loaded height.
 		assert.Equal(t, lastResponse, response1)
 		// use an incorret height to make sure the state store errors.
-		_, err = stateStore.LoadLastABCIResponse(height + 1)
+		_, err = stateStore.LoadLastFinalizeBlockResponse(height + 1)
 		assert.Error(t, err)
 		// check if the abci response didnt save in the abciresponses.
-		responses, err = stateStore.LoadABCIResponses(height)
+		responses, err = stateStore.LoadFinalizeBlockResponse(height)
 		require.NoError(t, err, responses)
 		require.Equal(t, response1, responses)
 	})
@@ -279,28 +283,76 @@ func TestLastABCIResponses(t *testing.T) {
 		stateDB := dbm.NewMemDB()
 		height := int64(10)
 		// stub the second abciresponse.
-		response2 := &cmtstate.ABCIResponses{
-			BeginBlock: &abci.ResponseBeginBlock{},
-			DeliverTxs: []*abci.ResponseDeliverTx{
+		response2 := &abci.ResponseFinalizeBlock{
+			TxResults: []*abci.ExecTxResult{
 				{Code: 44, Data: []byte("Hello again"), Log: "????"},
 			},
-			EndBlock: &abci.ResponseEndBlock{},
 		}
 		// create a new statestore with the responses on.
 		stateStore := sm.NewStore(stateDB, sm.StoreOptions{
 			DiscardABCIResponses: true,
 		})
 		// save an additional response.
-		err := stateStore.SaveABCIResponses(height+1, response2)
+		err := stateStore.SaveFinalizeBlockResponse(height+1, response2)
 		require.NoError(t, err)
 		// check to see if the response saved by calling the last response.
-		lastResponse2, err := stateStore.LoadLastABCIResponse(height + 1)
+		lastResponse2, err := stateStore.LoadLastFinalizeBlockResponse(height + 1)
 		require.NoError(t, err)
 		// check to see if the saved response height is the same as the loaded height.
 		assert.Equal(t, response2, lastResponse2)
 		// should error as we are no longer saving the response.
-		_, err = stateStore.LoadABCIResponses(height + 1)
-		assert.Equal(t, sm.ErrABCIResponsesNotPersisted, err)
+		_, err = stateStore.LoadFinalizeBlockResponse(height + 1)
+		assert.Equal(t, sm.ErrFinalizeBlockResponsesNotPersisted, err)
 	})
+}
 
+func TestFinalizeBlockRecoveryUsingLegacyABCIResponses(t *testing.T) {
+	var (
+		height              int64 = 10
+		lastABCIResponseKey       = []byte("lastABCIResponseKey")
+		memDB                     = dbm.NewMemDB()
+		cp                        = types.DefaultConsensusParams().ToProto()
+		legacyResp                = cmtstate.ABCIResponsesInfo{
+			LegacyAbciResponses: &cmtstate.LegacyABCIResponses{
+				BeginBlock: &cmtstate.ResponseBeginBlock{
+					Events: []abci.Event{{
+						Type: "begin_block",
+						Attributes: []abci.EventAttribute{{
+							Key:   "key",
+							Value: "value",
+						}},
+					}},
+				},
+				DeliverTxs: []*abci.ExecTxResult{{
+					Events: []abci.Event{{
+						Type: "tx",
+						Attributes: []abci.EventAttribute{{
+							Key:   "key",
+							Value: "value",
+						}},
+					}},
+				}},
+				EndBlock: &cmtstate.ResponseEndBlock{
+					ConsensusParamUpdates: &cp,
+				},
+			},
+			Height: height,
+		}
+	)
+	bz, err := legacyResp.Marshal()
+	require.NoError(t, err)
+	// should keep this in parity with state/store.go
+	require.NoError(t, memDB.Set(lastABCIResponseKey, bz))
+	stateStore := sm.NewStore(memDB, sm.StoreOptions{DiscardABCIResponses: false})
+	resp, err := stateStore.LoadLastFinalizeBlockResponse(height)
+	require.NoError(t, err)
+	require.Equal(t, resp.ConsensusParamUpdates, &cp)
+	require.Equal(t, len(resp.Events), len(legacyResp.LegacyAbciResponses.BeginBlock.Events))
+	require.Equal(t, resp.TxResults[0], legacyResp.LegacyAbciResponses.DeliverTxs[0])
+}
+
+func TestIntConversion(t *testing.T) {
+	x := int64(10)
+	b := sm.Int64ToBytes(x)
+	require.Equal(t, x, sm.Int64FromBytes(b))
 }

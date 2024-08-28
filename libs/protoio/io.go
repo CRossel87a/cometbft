@@ -33,7 +33,7 @@ package protoio
 import (
 	"io"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/cosmos/gogoproto/proto"
 )
 
 type Writer interface {
@@ -67,9 +67,8 @@ func getSize(v interface{}) (int, bool) {
 		ProtoSize() (n int)
 	}); ok {
 		return sz.ProtoSize(), true
-	} else {
-		return 0, false
 	}
+	return 0, false
 }
 
 // byteReader wraps an io.Reader and implements io.ByteReader, required by
@@ -96,4 +95,8 @@ func (r *byteReader) ReadByte() (byte, error) {
 		return 0x00, err
 	}
 	return r.buf[0], nil
+}
+
+func (r *byteReader) resetBytesRead() {
+	r.bytesRead = 0
 }

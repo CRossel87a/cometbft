@@ -1,12 +1,13 @@
 package abcicli
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
-	"github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/libs/service"
-	cmtsync "github.com/tendermint/tendermint/libs/sync"
+	"github.com/cometbft/cometbft/abci/types"
+	"github.com/cometbft/cometbft/libs/service"
+	cmtsync "github.com/cometbft/cometbft/libs/sync"
 )
 
 const (
@@ -14,48 +15,30 @@ const (
 	echoRetryIntervalSeconds = 1
 )
 
-// Client defines an interface for an ABCI client.
-// All `Async` methods return a `ReqRes` object.
-// All `Sync` methods return the appropriate protobuf ResponseXxx struct and an error.
-// Note these are client errors, eg. ABCI socket connectivity issues.
-// Application-related errors are reflected in response via ABCI error codes and logs.
+//go:generate ../../scripts/mockery_generate.sh Client
+
+// Client defines the interface for an ABCI client.
+//
+// NOTE these are client errors, eg. ABCI socket connectivity issues.
+// Application-related errors are reflected in response via ABCI error codes
+// and (potentially) error response.
 type Client interface {
 	service.Service
+	types.Application
 
-	SetResponseCallback(Callback)
+	// TODO: remove as each method now returns an error
 	Error() error
+	// TODO: remove as this is not implemented
+	Flush(context.Context) error
+	Echo(context.Context, string) (*types.ResponseEcho, error)
 
-	FlushAsync() *ReqRes
-	EchoAsync(msg string) *ReqRes
-	InfoAsync(types.RequestInfo) *ReqRes
-	SetOptionAsync(types.RequestSetOption) *ReqRes
-	DeliverTxAsync(types.RequestDeliverTx) *ReqRes
-	CheckTxAsync(types.RequestCheckTx) *ReqRes
-	QueryAsync(types.RequestQuery) *ReqRes
-	CommitAsync() *ReqRes
-	InitChainAsync(types.RequestInitChain) *ReqRes
-	BeginBlockAsync(types.RequestBeginBlock) *ReqRes
-	EndBlockAsync(types.RequestEndBlock) *ReqRes
-	ListSnapshotsAsync(types.RequestListSnapshots) *ReqRes
-	OfferSnapshotAsync(types.RequestOfferSnapshot) *ReqRes
-	LoadSnapshotChunkAsync(types.RequestLoadSnapshotChunk) *ReqRes
-	ApplySnapshotChunkAsync(types.RequestApplySnapshotChunk) *ReqRes
-
-	FlushSync() error
-	EchoSync(msg string) (*types.ResponseEcho, error)
-	InfoSync(types.RequestInfo) (*types.ResponseInfo, error)
-	SetOptionSync(types.RequestSetOption) (*types.ResponseSetOption, error)
-	DeliverTxSync(types.RequestDeliverTx) (*types.ResponseDeliverTx, error)
-	CheckTxSync(types.RequestCheckTx) (*types.ResponseCheckTx, error)
-	QuerySync(types.RequestQuery) (*types.ResponseQuery, error)
-	CommitSync() (*types.ResponseCommit, error)
-	InitChainSync(types.RequestInitChain) (*types.ResponseInitChain, error)
-	BeginBlockSync(types.RequestBeginBlock) (*types.ResponseBeginBlock, error)
-	EndBlockSync(types.RequestEndBlock) (*types.ResponseEndBlock, error)
-	ListSnapshotsSync(types.RequestListSnapshots) (*types.ResponseListSnapshots, error)
-	OfferSnapshotSync(types.RequestOfferSnapshot) (*types.ResponseOfferSnapshot, error)
-	LoadSnapshotChunkSync(types.RequestLoadSnapshotChunk) (*types.ResponseLoadSnapshotChunk, error)
-	ApplySnapshotChunkSync(types.RequestApplySnapshotChunk) (*types.ResponseApplySnapshotChunk, error)
+	// FIXME: All other operations are run synchronously and rely
+	// on the caller to dictate concurrency (i.e. run a go routine),
+	// with the exception of `CheckTxAsync` which we maintain
+	// for the v0 mempool. We should explore refactoring the
+	// mempool to remove this vestige behavior.
+	SetResponseCallback(Callback)
+	CheckTxAsync(context.Context, *types.RequestCheckTx) (*ReqRes, error)
 }
 
 //----------------------------------------

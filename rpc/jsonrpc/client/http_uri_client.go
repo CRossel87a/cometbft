@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	types "github.com/tendermint/tendermint/rpc/jsonrpc/types"
+	types "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 )
 
 const (
@@ -52,8 +52,8 @@ func NewURI(remote string) (*URIClient, error) {
 
 // Call issues a POST form HTTP request.
 func (c *URIClient) Call(ctx context.Context, method string,
-	params map[string]interface{}, result interface{},
-) (interface{}, error) {
+	params map[string]interface{}, result interface{}) (interface{}, error) {
+
 	values, err := argsToURLValues(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode params: %w", err)

@@ -7,12 +7,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
+	e2e "github.com/cometbft/cometbft/test/e2e/pkg"
+	"github.com/cometbft/cometbft/version"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	e2e "github.com/tendermint/tendermint/test/e2e/pkg"
-	"github.com/tendermint/tendermint/version"
 )
 
 var (
@@ -35,38 +36,39 @@ var (
 	nodeDatabases = uniformChoice{"goleveldb", "cleveldb", "rocksdb", "boltdb", "badgerdb"}
 	ipv6          = uniformChoice{false, true}
 	// FIXME: grpc disabled due to https://github.com/tendermint/tendermint/issues/5439
-	nodeABCIProtocols    = uniformChoice{"unix", "tcp", "builtin"} // "grpc"
-	nodePrivvalProtocols = uniformChoice{"file", "unix", "tcp"}
-	// FIXME: v2 disabled due to flake
-	nodeFastSyncs         = uniformChoice{"v0"} // "v2"
+	nodeABCIProtocols     = uniformChoice{"unix", "tcp", "builtin", "builtin_connsync"} // "grpc"
+	nodePrivvalProtocols  = uniformChoice{"file", "unix", "tcp"}
+	nodeBlockSyncs        = uniformChoice{"v0"} // "v2"
 	nodeStateSyncs        = uniformChoice{false, true}
-	nodeMempools          = uniformChoice{"v0", "v1"}
 	nodePersistIntervals  = uniformChoice{0, 1, 5}
 	nodeSnapshotIntervals = uniformChoice{0, 3}
-	nodeRetainBlocks      = uniformChoice{0, 1, 5}
-	nodePerturbations     = probSetChoice{
+	nodeRetainBlocks      = uniformChoice{
+		0,
+		2 * int(e2e.EvidenceAgeHeight),
+		4 * int(e2e.EvidenceAgeHeight),
+	}
+	evidence          = uniformChoice{0, 1, 10, 20, 200}
+	abciDelays        = uniformChoice{"none", "small", "large"}
+	nodePerturbations = probSetChoice{
 		"disconnect": 0.1,
 		"pause":      0.1,
 		"kill":       0.1,
 		"restart":    0.1,
 		"upgrade":    0.3,
 	}
-	nodeMisbehaviors = weightedChoice{
-		// FIXME: evidence disabled due to node panicking when not
-		// having sufficient block history to process evidence.
-		// https://github.com/tendermint/tendermint/issues/5617
-		// misbehaviorOption{"double-prevote"}: 1,
-		misbehaviorOption{}: 9,
-	}
 	lightNodePerturbations = probSetChoice{
 		"upgrade": 0.3,
 	}
+	voteExtensionUpdateHeight = uniformChoice{int64(-1), int64(0), int64(1)} // -1: genesis, 0: InitChain, 1: (use offset)
+	voteExtensionEnabled      = weightedChoice{true: 3, false: 1}
+	voteExtensionHeightOffset = uniformChoice{int64(0), int64(10), int64(100)}
 )
 
 type generateConfig struct {
 	randSource   *rand.Rand
 	outputDir    string
 	multiVersion string
+	prometheus   bool
 }
 
 // Generate generates random testnets using the given RNG.
@@ -108,7 +110,7 @@ func Generate(cfg *generateConfig) ([]e2e.Manifest, error) {
 	}
 	manifests := []e2e.Manifest{}
 	for _, opt := range combinations(testnetCombinations) {
-		manifest, err := generateTestnet(cfg.randSource, opt, upgradeVersion)
+		manifest, err := generateTestnet(cfg.randSource, opt, upgradeVersion, cfg.prometheus)
 		if err != nil {
 			return nil, err
 		}
@@ -118,7 +120,7 @@ func Generate(cfg *generateConfig) ([]e2e.Manifest, error) {
 }
 
 // generateTestnet generates a single testnet with the given options.
-func generateTestnet(r *rand.Rand, opt map[string]interface{}, upgradeVersion string) (e2e.Manifest, error) {
+func generateTestnet(r *rand.Rand, opt map[string]interface{}, upgradeVersion string, prometheus bool) (e2e.Manifest, error) {
 	manifest := e2e.Manifest{
 		IPv6:             ipv6.Choose(r).(bool),
 		ABCIProtocol:     nodeABCIProtocols.Choose(r).(string),
@@ -126,8 +128,33 @@ func generateTestnet(r *rand.Rand, opt map[string]interface{}, upgradeVersion st
 		InitialState:     opt["initialState"].(map[string]string),
 		Validators:       &map[string]int64{},
 		ValidatorUpdates: map[string]map[string]int64{},
+		Evidence:         evidence.Choose(r).(int),
 		Nodes:            map[string]*e2e.ManifestNode{},
 		UpgradeVersion:   upgradeVersion,
+		Prometheus:       prometheus,
+	}
+
+	switch abciDelays.Choose(r).(string) {
+	case "none":
+	case "small":
+		manifest.PrepareProposalDelay = 100 * time.Millisecond
+		manifest.ProcessProposalDelay = 100 * time.Millisecond
+		manifest.VoteExtensionDelay = 20 * time.Millisecond
+		manifest.FinalizeBlockDelay = 200 * time.Millisecond
+	case "large":
+		manifest.PrepareProposalDelay = 200 * time.Millisecond
+		manifest.ProcessProposalDelay = 200 * time.Millisecond
+		manifest.CheckTxDelay = 20 * time.Millisecond
+		manifest.VoteExtensionDelay = 100 * time.Millisecond
+		manifest.FinalizeBlockDelay = 500 * time.Millisecond
+	}
+	manifest.VoteExtensionsUpdateHeight = voteExtensionUpdateHeight.Choose(r).(int64)
+	if manifest.VoteExtensionsUpdateHeight == 1 {
+		manifest.VoteExtensionsUpdateHeight = manifest.InitialHeight + voteExtensionHeightOffset.Choose(r).(int64)
+	}
+	if voteExtensionEnabled.Choose(r).(bool) {
+		baseHeight := max(manifest.VoteExtensionsUpdateHeight+1, manifest.InitialHeight)
+		manifest.VoteExtensionsEnableHeight = baseHeight + voteExtensionHeightOffset.Choose(r).(int64)
 	}
 
 	var numSeeds, numValidators, numFulls, numLightClients int
@@ -149,7 +176,7 @@ func generateTestnet(r *rand.Rand, opt map[string]interface{}, upgradeVersion st
 	// First we generate seed nodes, starting at the initial height.
 	for i := 1; i <= numSeeds; i++ {
 		manifest.Nodes[fmt.Sprintf("seed%02d", i)] = generateNode(
-			r, e2e.ModeSeed, 0, manifest.InitialHeight, false)
+			r, e2e.ModeSeed, 0, false)
 	}
 
 	// Next, we generate validators. We make sure a BFT quorum of validators start
@@ -165,7 +192,7 @@ func generateTestnet(r *rand.Rand, opt map[string]interface{}, upgradeVersion st
 		}
 		name := fmt.Sprintf("validator%02d", i)
 		manifest.Nodes[name] = generateNode(
-			r, e2e.ModeValidator, startAt, manifest.InitialHeight, i <= 2)
+			r, e2e.ModeValidator, startAt, i <= 2)
 
 		if startAt == 0 {
 			(*manifest.Validators)[name] = int64(30 + r.Intn(71))
@@ -194,7 +221,7 @@ func generateTestnet(r *rand.Rand, opt map[string]interface{}, upgradeVersion st
 			nextStartAt += 5
 		}
 		manifest.Nodes[fmt.Sprintf("full%02d", i)] = generateNode(
-			r, e2e.ModeFull, startAt, manifest.InitialHeight, false)
+			r, e2e.ModeFull, startAt, false)
 	}
 
 	// We now set up peer discovery for nodes. Seed nodes are fully meshed with
@@ -257,7 +284,7 @@ func generateTestnet(r *rand.Rand, opt map[string]interface{}, upgradeVersion st
 // here, since we need to know the overall network topology and startup
 // sequencing.
 func generateNode(
-	r *rand.Rand, mode e2e.Mode, startAt int64, initialHeight int64, forceArchive bool,
+	r *rand.Rand, mode e2e.Mode, startAt int64, forceArchive bool,
 ) *e2e.ManifestNode {
 	node := e2e.ManifestNode{
 		Version:          nodeVersions.Choose(r).(string),
@@ -265,8 +292,7 @@ func generateNode(
 		StartAt:          startAt,
 		Database:         nodeDatabases.Choose(r).(string),
 		PrivvalProtocol:  nodePrivvalProtocols.Choose(r).(string),
-		FastSync:         nodeFastSyncs.Choose(r).(string),
-		Mempool:          nodeMempools.Choose(r).(string),
+		BlockSyncVersion: nodeBlockSyncs.Choose(r).(string),
 		StateSync:        nodeStateSyncs.Choose(r).(bool) && startAt > 0,
 		PersistInterval:  ptrUint64(uint64(nodePersistIntervals.Choose(r).(int))),
 		SnapshotInterval: uint64(nodeSnapshotIntervals.Choose(r).(int)),
@@ -279,17 +305,6 @@ func generateNode(
 	if forceArchive {
 		node.RetainBlocks = 0
 		node.SnapshotInterval = 3
-	}
-
-	if node.Mode == string(e2e.ModeValidator) {
-		misbehaveAt := startAt + 5 + int64(r.Intn(10))
-		if startAt == 0 {
-			misbehaveAt += initialHeight - 1
-		}
-		node.Misbehaviors = nodeMisbehaviors.Choose(r).(misbehaviorOption).atHeight(misbehaveAt)
-		if len(node.Misbehaviors) != 0 {
-			node.PrivvalProtocol = "file"
-		}
 	}
 
 	// If a node which does not persist state also does not retain blocks, randomly
@@ -330,19 +345,6 @@ func generateLightNode(r *rand.Rand, startAt int64, providers []string) *e2e.Man
 
 func ptrUint64(i uint64) *uint64 {
 	return &i
-}
-
-type misbehaviorOption struct {
-	misbehavior string
-}
-
-func (m misbehaviorOption) atHeight(height int64) map[string]string {
-	misbehaviorMap := make(map[string]string)
-	if m.misbehavior == "" {
-		return misbehaviorMap
-	}
-	misbehaviorMap[strconv.Itoa(int(height))] = m.misbehavior
-	return misbehaviorMap
 }
 
 // Parses strings like "v0.34.21:1,v0.34.22:2" to represent two versions

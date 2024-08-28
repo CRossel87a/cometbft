@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tendermint/tendermint/crypto/ed25519"
-	"github.com/tendermint/tendermint/libs/protoio"
-	"github.com/tendermint/tendermint/p2p/conn"
-	tmp2p "github.com/tendermint/tendermint/proto/tendermint/p2p"
+	"github.com/cometbft/cometbft/crypto/ed25519"
+	"github.com/cometbft/cometbft/libs/protoio"
+	"github.com/cometbft/cometbft/p2p/conn"
+	tmp2p "github.com/cometbft/cometbft/proto/tendermint/p2p"
 )
 
 var defaultNodeName = "host_peer"
@@ -427,7 +427,7 @@ func TestTransportMultiplexRejectMissmatchID(t *testing.T) {
 	_, err := mt.Accept(peerConfig{})
 	if e, ok := err.(ErrRejected); ok {
 		if !e.IsAuthFailure() {
-			t.Errorf("expected auth failure, got %v", err)
+			t.Errorf("expected auth failure, got %v", e)
 		}
 	} else {
 		t.Errorf("expected ErrRejected, got %v", err)
@@ -455,7 +455,7 @@ func TestTransportMultiplexDialRejectWrongID(t *testing.T) {
 		t.Logf("connection failed: %v", err)
 		if e, ok := err.(ErrRejected); ok {
 			if !e.IsAuthFailure() {
-				t.Errorf("expected auth failure, got %v", err)
+				t.Errorf("expected auth failure, got %v", e)
 			}
 		} else {
 			t.Errorf("expected ErrRejected, got %v", err)
@@ -492,7 +492,7 @@ func TestTransportMultiplexRejectIncompatible(t *testing.T) {
 	_, err := mt.Accept(peerConfig{})
 	if e, ok := err.(ErrRejected); ok {
 		if !e.IsIncompatible() {
-			t.Errorf("expected to reject incompatible, got %v", err)
+			t.Errorf("expected to reject incompatible, got %v", e)
 		}
 	} else {
 		t.Errorf("expected ErrRejected, got %v", err)
@@ -519,7 +519,7 @@ func TestTransportMultiplexRejectSelf(t *testing.T) {
 	if err := <-errc; err != nil {
 		if e, ok := err.(ErrRejected); ok {
 			if !e.IsSelf() {
-				t.Errorf("expected to reject self, got: %v", err)
+				t.Errorf("expected to reject self, got: %v", e)
 			}
 		} else {
 			t.Errorf("expected ErrRejected, got %v", err)
@@ -529,8 +529,8 @@ func TestTransportMultiplexRejectSelf(t *testing.T) {
 	}
 
 	_, err := mt.Accept(peerConfig{})
-	if e, ok := err.(ErrRejected); ok {
-		if !e.IsSelf() {
+	if err, ok := err.(ErrRejected); ok {
+		if !err.IsSelf() {
 			t.Errorf("expected to reject self, got: %v", err)
 		}
 	} else {
